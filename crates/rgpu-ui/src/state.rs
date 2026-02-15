@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use rgpu_core::config::RgpuConfig;
+use rgpu_core::config::{RgpuConfig, TokenEntry, TransportMode};
 use rgpu_protocol::gpu_info::GpuInfo;
 
 /// Maximum number of metrics history entries (ring buffer).
@@ -57,6 +57,8 @@ pub struct ServerState {
     pub gpus: Vec<GpuInfo>,
     pub metrics_history: VecDeque<MetricsSnapshot>,
     pub current_rates: MetricsRates,
+    /// Set by UI to request disconnect; fetcher will drop the connection.
+    pub should_disconnect: bool,
 }
 
 impl ServerState {
@@ -69,6 +71,7 @@ impl ServerState {
             gpus: Vec::new(),
             metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
             current_rates: MetricsRates::default(),
+            should_disconnect: false,
         }
     }
 
@@ -108,9 +111,60 @@ impl ServerState {
 /// Active tab in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiTab {
+    Control,
     GpuOverview,
     Metrics,
     ConfigEditor,
+}
+
+/// Status of the embedded server running inside the UI process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalServerStatus {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Error(String),
+}
+
+/// Configuration for the embedded server, edited in the Control panel.
+#[derive(Debug, Clone)]
+pub struct LocalServerConfig {
+    pub server_id: u16,
+    pub port: u16,
+    pub bind: String,
+    pub transport: TransportMode,
+    pub cert_path: String,
+    pub key_path: String,
+    pub max_clients: u32,
+    pub tokens: Vec<TokenEntry>,
+    // Editing helpers for the "add token" form
+    pub new_token_name: String,
+    pub new_token_value: String,
+}
+
+impl Default for LocalServerConfig {
+    fn default() -> Self {
+        Self {
+            server_id: 0,
+            port: 9876,
+            bind: "0.0.0.0".to_string(),
+            transport: TransportMode::default(),
+            cert_path: String::new(),
+            key_path: String::new(),
+            max_clients: 16,
+            tokens: Vec::new(),
+            new_token_name: String::new(),
+            new_token_value: String::new(),
+        }
+    }
+}
+
+/// A pending connection request from the UI to be processed by the fetcher.
+#[derive(Debug, Clone)]
+pub struct PendingConnection {
+    pub address: String,
+    pub token: String,
 }
 
 /// Editable configuration state for the config editor.
@@ -149,6 +203,22 @@ pub struct UiState {
     pub error_log: VecDeque<String>,
     /// Signal the fetcher to stop
     pub should_stop: bool,
+
+    // --- Embedded server control ---
+    pub local_server_status: LocalServerStatus,
+    pub local_server_config: LocalServerConfig,
+    /// Set by UI to request server start; cleared by fetcher after processing.
+    pub server_start_requested: bool,
+    /// Set by UI to request server stop; cleared by fetcher after processing.
+    pub server_stop_requested: bool,
+
+    // --- Dynamic connections ---
+    /// Pending connections to be established by the fetcher.
+    pub pending_connections: Vec<PendingConnection>,
+
+    // --- Connection form state ---
+    pub new_connection_address: String,
+    pub new_connection_token: String,
 }
 
 impl UiState {
@@ -171,10 +241,17 @@ impl UiState {
             servers: server_states,
             config_path,
             config_editor,
-            active_tab: UiTab::GpuOverview,
+            active_tab: UiTab::Control,
             poll_interval_secs,
             error_log: VecDeque::with_capacity(MAX_ERROR_LOG),
             should_stop: false,
+            local_server_status: LocalServerStatus::Stopped,
+            local_server_config: LocalServerConfig::default(),
+            server_start_requested: false,
+            server_stop_requested: false,
+            pending_connections: Vec::new(),
+            new_connection_address: String::new(),
+            new_connection_token: String::new(),
         }
     }
 

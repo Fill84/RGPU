@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 rgpu-protocol = { workspace = true }
 rgpu-transport = { workspace = true }
+rgpu-server = { workspace = true }
 rgpu-core = { workspace = true }
 rgpu-common = { workspace = true }
 eframe = { workspace = true }

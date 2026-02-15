@@ -79,6 +79,66 @@ impl RgpuServer {
         }
     }
 
+    /// Returns a reference to the discovered GPU information.
+    pub fn gpu_infos(&self) -> &[GpuInfo] {
+        &self.gpu_infos
+    }
+
+    /// Returns a reference to the server metrics.
+    pub fn metrics(&self) -> &Arc<ServerMetrics> {
+        &self.metrics
+    }
+
+    /// Start listening for connections with an external shutdown signal.
+    ///
+    /// The server stops when the `shutdown_rx` receiver yields `true`.
+    /// Use this when embedding the server inside another process (e.g. the UI).
+    pub async fn run_with_shutdown(
+        &self,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!(
+            "serving {} GPU(s): {}",
+            self.gpu_infos.len(),
+            self.gpu_infos
+                .iter()
+                .map(|g| g.device_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        // Spawn periodic metrics logger
+        let metrics = self.metrics.clone();
+        let mut metrics_shutdown = shutdown_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                        info!(
+                            connections_total = metrics.connections_total.load(Ordering::Relaxed),
+                            connections_active = metrics.connections_active.load(Ordering::Relaxed),
+                            requests = metrics.requests_total.load(Ordering::Relaxed),
+                            errors = metrics.errors_total.load(Ordering::Relaxed),
+                            cuda = metrics.cuda_commands.load(Ordering::Relaxed),
+                            vulkan = metrics.vulkan_commands.load(Ordering::Relaxed),
+                            "metrics snapshot"
+                        );
+                    }
+                    _ = metrics_shutdown.changed() => { break; }
+                }
+            }
+        });
+
+        // Store bind address for metrics queries
+        *self.metrics.bind_address.write() =
+            format!("{}:{}", self.config.bind, self.config.port);
+
+        match self.config.transport {
+            TransportMode::Quic => self.run_quic(shutdown_rx).await,
+            TransportMode::Tcp => self.run_tcp(shutdown_rx).await,
+        }
+    }
+
     /// Start listening for connections.
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!(

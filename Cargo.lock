@@ -2550,6 +2550,7 @@ dependencies = [
  "rgpu-common",
  "rgpu-core",
  "rgpu-protocol",
+ "rgpu-server",
  "rgpu-transport",
  "serde",
  "tokio",
