@@ -1,0 +1,12 @@
+[package]
+name = "rgpu-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+rkyv = { workspace = true }
+lz4_flex = { workspace = true }
+thiserror = { workspace = true }
+bytemuck = { workspace = true }
+bitflags = "2"

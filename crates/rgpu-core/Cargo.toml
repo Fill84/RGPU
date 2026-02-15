@@ -1,0 +1,13 @@
+[package]
+name = "rgpu-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-common = { workspace = true }
+dashmap = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

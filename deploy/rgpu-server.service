@@ -1,0 +1,24 @@
+[Unit]
+Description=RGPU Remote GPU Server
+Documentation=https://github.com/example/rgpu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rgpu server --config /etc/rgpu/rgpu.toml --pid-file /run/rgpu-server.pid
+PIDFile=/run/rgpu-server.pid
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+Environment=RGPU_LOG=info
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run /var/log
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

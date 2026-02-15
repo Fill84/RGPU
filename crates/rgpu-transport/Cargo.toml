@@ -1,0 +1,23 @@
+[package]
+name = "rgpu-transport"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-common = { workspace = true }
+tokio = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+webpki-roots = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+dashmap = { workspace = true }
+quinn = { workspace = true }
+hex = "0.4"

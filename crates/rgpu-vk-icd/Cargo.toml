@@ -1,0 +1,16 @@
+[package]
+name = "rgpu-vk-icd"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-core = { workspace = true }
+rgpu-common = { workspace = true }
+ash = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }

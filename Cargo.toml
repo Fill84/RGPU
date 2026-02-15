@@ -1,0 +1,63 @@
+[workspace]
+members = [
+    "crates/rgpu-cli",
+    "crates/rgpu-protocol",
+    "crates/rgpu-transport",
+    "crates/rgpu-core",
+    "crates/rgpu-server",
+    "crates/rgpu-client",
+    "crates/rgpu-vk-icd",
+    "crates/rgpu-cuda-interpose",
+    "crates/rgpu-common",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+rkyv = "0.8"
+lz4_flex = "0.11"
+quinn = "0.11"
+toml = "0.8"
+# Networking
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+webpki-roots = "0.26"
+# Vulkan
+ash = "0.38"
+# Concurrency
+dashmap = "6"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+# Crypto
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# CLI
+clap = { version = "4", features = ["derive"] }
+# FFI
+libloading = "0.8"
+bytemuck = { version = "1", features = ["derive"] }
+# Error handling
+thiserror = "2"
+anyhow = "1"
+# Internal crates
+rgpu-protocol = { path = "crates/rgpu-protocol" }
+rgpu-transport = { path = "crates/rgpu-transport" }
+rgpu-core = { path = "crates/rgpu-core" }
+rgpu-server = { path = "crates/rgpu-server" }
+rgpu-client = { path = "crates/rgpu-client" }
+rgpu-common = { path = "crates/rgpu-common" }

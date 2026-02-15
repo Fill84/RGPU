@@ -1,0 +1,17 @@
+[package]
+name = "rgpu-cuda-interpose"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-core = { workspace = true }
+rgpu-common = { workspace = true }
+libloading = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

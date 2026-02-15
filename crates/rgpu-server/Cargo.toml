@@ -1,0 +1,23 @@
+[package]
+name = "rgpu-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-transport = { workspace = true }
+rgpu-core = { workspace = true }
+rgpu-common = { workspace = true }
+ash = { workspace = true }
+libloading = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+parking_lot = { workspace = true }
+quinn = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "28", features = ["wgsl-in", "spv-out"] }

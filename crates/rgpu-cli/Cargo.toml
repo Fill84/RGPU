@@ -1,0 +1,22 @@
+[package]
+name = "rgpu-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rgpu"
+path = "src/main.rs"
+
+[dependencies]
+rgpu-server = { workspace = true }
+rgpu-client = { workspace = true }
+rgpu-core = { workspace = true }
+rgpu-common = { workspace = true }
+rgpu-protocol = { workspace = true }
+rgpu-transport = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
