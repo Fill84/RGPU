@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<installer-gui-script minSpecVersion="2">
+    <title>RGPU - Remote GPU Sharing</title>
+    <welcome file="welcome.html" />
+    <license file="license.html" />
+    <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64" />
+    <domains enable_localSystem="true" />
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.rgpu" />
+        </line>
+    </choices-outline>
+    <choice id="default" />
+    <choice id="com.rgpu"
+        visible="false"
+        title="RGPU"
+        description="RGPU Remote GPU Sharing"
+        start_selected="true">
+        <pkg-ref id="com.rgpu" />
+    </choice>
+    <pkg-ref id="com.rgpu"
+        version="0.1.0"
+        onConclusion="none">rgpu-component.pkg</pkg-ref>
+</installer-gui-script>

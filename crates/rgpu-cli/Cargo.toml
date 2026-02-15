@@ -21,3 +21,42 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 rgpu-ui = { workspace = true }
+
+# ─── Linux .deb packaging (cargo-deb) ───
+[package.metadata.deb]
+maintainer = "RGPU Project"
+copyright = "2026, RGPU Contributors"
+extended-description = """RGPU enables remote GPU sharing over the network. \
+It exposes local GPUs as remote resources accessible by clients, \
+supporting both Vulkan and CUDA workloads."""
+section = "graphics"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/rgpu", "usr/bin/rgpu", "755"],
+    ["target/release/librgpu_cuda_interpose.so", "usr/lib/rgpu/librgpu_cuda_interpose.so", "644"],
+    ["target/release/librgpu_vk_icd.so", "usr/lib/rgpu/librgpu_vk_icd.so", "644"],
+    ["packaging/config/rgpu_icd_linux.json", "usr/share/vulkan/icd.d/rgpu_icd.json", "644"],
+    ["packaging/config/rgpu.toml.template", "etc/rgpu/rgpu.toml", "644"],
+    ["packaging/linux/deb/rgpu-ld.conf", "etc/ld.so.conf.d/rgpu.conf", "644"],
+    ["packaging/linux/rgpu-server.service", "lib/systemd/system/rgpu-server.service", "644"],
+    ["packaging/linux/rgpu-client.service", "lib/systemd/system/rgpu-client.service", "644"],
+]
+conf-files = ["/etc/rgpu/rgpu.toml"]
+maintainer-scripts = "../../packaging/linux/deb/"
+
+# ─── Linux .rpm packaging (cargo-generate-rpm) ───
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/rgpu", dest = "/usr/bin/rgpu", mode = "0755" },
+    { source = "target/release/librgpu_cuda_interpose.so", dest = "/usr/lib/rgpu/librgpu_cuda_interpose.so", mode = "0644" },
+    { source = "target/release/librgpu_vk_icd.so", dest = "/usr/lib/rgpu/librgpu_vk_icd.so", mode = "0644" },
+    { source = "packaging/config/rgpu_icd_linux.json", dest = "/usr/share/vulkan/icd.d/rgpu_icd.json", mode = "0644" },
+    { source = "packaging/config/rgpu.toml.template", dest = "/etc/rgpu/rgpu.toml", mode = "0644", config = true },
+    { source = "packaging/linux/deb/rgpu-ld.conf", dest = "/etc/ld.so.conf.d/rgpu.conf", mode = "0644" },
+    { source = "packaging/linux/rgpu-server.service", dest = "/lib/systemd/system/rgpu-server.service", mode = "0644" },
+    { source = "packaging/linux/rgpu-client.service", dest = "/lib/systemd/system/rgpu-client.service", mode = "0644" },
+]
+post_install_script = "packaging/linux/rpm/post_install.sh"
+pre_uninstall_script = "packaging/linux/rpm/pre_uninstall.sh"
+post_uninstall_script = "packaging/linux/rpm/post_uninstall.sh"

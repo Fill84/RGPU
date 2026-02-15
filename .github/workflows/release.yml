@@ -1,0 +1,204 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ─── Windows Installer ─────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Download EnvVarUpdate plugin
+        shell: powershell
+        run: |
+          # Download EnvVarUpdate.nsh for NSIS PATH manipulation
+          $nsisInclude = "C:\Program Files (x86)\NSIS\Include"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/DigitalMediaServer/NSIS-EnvVarUpdate/master/EnvVarUpdate.nsh" -OutFile "$nsisInclude\EnvVarUpdate.nsh"
+
+      - name: Stage build artifacts
+        shell: powershell
+        run: |
+          $staging = "packaging\windows\nsis\staging"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target\release\rgpu.exe" "$staging\"
+          Copy-Item "target\release\rgpu_cuda_interpose.dll" "$staging\"
+          Copy-Item "target\release\rgpu_vk_icd.dll" "$staging\"
+          Copy-Item "packaging\config\rgpu.toml.template" "$staging\"
+
+      - name: Build NSIS installer
+        run: |
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=${{ steps.version.outputs.VERSION }} packaging\windows\nsis\rgpu-installer.nsi
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgpu-windows-x64
+          path: packaging/windows/nsis/rgpu-*-setup.exe
+
+  # ─── Linux Packages (.deb + .rpm) ──────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Install packaging tools
+        run: |
+          cargo install cargo-deb --locked
+          cargo install cargo-generate-rpm --locked
+
+      - name: Build .deb package
+        run: cargo deb -p rgpu-cli --no-build
+
+      - name: Build .rpm package
+        run: cargo generate-rpm -p crates/rgpu-cli
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgpu-linux-x64
+          path: |
+            target/debian/rgpu_*.deb
+            target/generate-rpm/rgpu-*.rpm
+
+  # ─── macOS Package (.pkg) ──────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-cargo-
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build .pkg installer
+        run: |
+          chmod +x packaging/macos/build-macos.sh
+          packaging/macos/build-macos.sh --skip-build ${{ steps.version.outputs.VERSION }}
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgpu-macos-x64
+          path: target/rgpu-*-macos-x64.pkg
+
+  # ─── Create GitHub Release ─────────────────────
+  release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | head -20
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.pkg
+          generate_release_notes: true
+          draft: false
+          prerelease: false

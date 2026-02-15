@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rgpu.client</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/rgpu</string>
+        <string>client</string>
+        <string>--config</string>
+        <string>/usr/local/etc/rgpu/rgpu.toml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/rgpu-client.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/rgpu-client.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RGPU_LOG</key>
+        <string>info</string>
+    </dict>
+</dict>
+</plist>

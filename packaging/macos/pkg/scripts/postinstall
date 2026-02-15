@@ -1,0 +1,41 @@
+#!/bin/bash
+set -e
+
+# Create directories
+mkdir -p /usr/local/etc/rgpu
+mkdir -p /usr/local/var/log
+
+# Install default config if none exists
+if [ ! -f /usr/local/etc/rgpu/rgpu.toml ]; then
+    cp /usr/local/share/rgpu/rgpu.toml.template /usr/local/etc/rgpu/rgpu.toml
+    echo "Installed default config to /usr/local/etc/rgpu/rgpu.toml"
+fi
+
+# Create Vulkan ICD directory (if needed)
+mkdir -p /usr/local/share/vulkan/icd.d
+
+# Install LaunchDaemons (but don't load them)
+if [ -d /usr/local/share/rgpu ]; then
+    for plist in com.rgpu.server.plist com.rgpu.client.plist; do
+        if [ -f "/usr/local/share/rgpu/${plist}" ]; then
+            cp "/usr/local/share/rgpu/${plist}" /Library/LaunchDaemons/
+            chmod 644 "/Library/LaunchDaemons/${plist}"
+            chown root:wheel "/Library/LaunchDaemons/${plist}"
+        fi
+    done
+fi
+
+echo ""
+echo "=== RGPU installed successfully ==="
+echo ""
+echo "To start the server:"
+echo "  sudo launchctl load /Library/LaunchDaemons/com.rgpu.server.plist"
+echo ""
+echo "To start the client:"
+echo "  sudo launchctl load /Library/LaunchDaemons/com.rgpu.client.plist"
+echo ""
+echo "Config: /usr/local/etc/rgpu/rgpu.toml"
+echo "Launch UI: rgpu ui"
+echo ""
+
+exit 0

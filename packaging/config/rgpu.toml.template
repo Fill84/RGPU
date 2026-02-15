@@ -1,0 +1,24 @@
+# RGPU Configuration
+# See documentation for all options.
+
+[server]
+bind = "0.0.0.0"
+port = 9876
+server_id = 1
+max_clients = 16
+# cert_path = "/etc/rgpu/cert.pem"
+# key_path = "/etc/rgpu/key.pem"
+# transport = "tcp"  # or "quic"
+
+[client]
+# gpu_ordering = "LocalFirst"  # LocalFirst, RemoteFirst, ByCapability
+
+# [[client.servers]]
+# address = "gpu-server.local:9876"
+# token = ""
+# transport = "tcp"
+
+[security]
+# [[security.tokens]]
+# token = "your-token-here"
+# name = "client-1"
