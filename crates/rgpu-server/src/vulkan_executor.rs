@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ash::vk;
 use dashmap::DashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use rgpu_protocol::handle::{NetworkHandle, ResourceType};
 use rgpu_protocol::vulkan_commands::*;
@@ -61,7 +61,7 @@ pub struct VulkanExecutor {
 
 struct MappedMemoryInfo {
     offset: u64,
-    size: u64,
+    _size: u64,
     ptr: *mut std::ffi::c_void,
 }
 
@@ -263,7 +263,7 @@ impl VulkanExecutor {
             VulkanCommand::GetPhysicalDeviceProperties { physical_device }
             | VulkanCommand::GetPhysicalDeviceProperties2 { physical_device } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -326,7 +326,7 @@ impl VulkanExecutor {
             VulkanCommand::GetPhysicalDeviceFeatures { physical_device }
             | VulkanCommand::GetPhysicalDeviceFeatures2 { physical_device } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -360,7 +360,7 @@ impl VulkanExecutor {
             VulkanCommand::GetPhysicalDeviceMemoryProperties { physical_device }
             | VulkanCommand::GetPhysicalDeviceMemoryProperties2 { physical_device } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -408,7 +408,7 @@ impl VulkanExecutor {
             VulkanCommand::GetPhysicalDeviceQueueFamilyProperties { physical_device }
             | VulkanCommand::GetPhysicalDeviceQueueFamilyProperties2 { physical_device } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -451,7 +451,7 @@ impl VulkanExecutor {
                 format,
             } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -488,7 +488,7 @@ impl VulkanExecutor {
                 enabled_features,
             } => {
                 let (pd, inst_handle) = match self.physical_device_handles.get(&physical_device) {
-                    Some(e) => (*e.value()),
+                    Some(e) => *e.value(),
                     None => {
                         return VulkanResponse::Error {
                             code: vk::Result::ERROR_DEVICE_LOST.as_raw(),
@@ -821,7 +821,7 @@ impl VulkanExecutor {
                             memory,
                             MappedMemoryInfo {
                                 offset,
-                                size: map_size,
+                                _size: map_size,
                                 ptr,
                             },
                         );

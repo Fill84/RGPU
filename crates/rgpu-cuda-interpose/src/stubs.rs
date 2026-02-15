@@ -17,15 +17,6 @@ const CUDA_SUCCESS: CUresult = 0;
 
 // ── Graph API Stubs ──────────────────────────────────────────────
 
-macro_rules! stub_not_supported {
-    ($name:ident) => {
-        #[no_mangle]
-        pub unsafe extern "C" fn $name(_: ...) -> CUresult {
-            CUDA_ERROR_NOT_SUPPORTED
-        }
-    };
-}
-
 // We can't use variadic C functions in stable Rust easily, so define each stub explicitly.
 // All take arbitrary arguments and return CUDA_ERROR_NOT_SUPPORTED.
 

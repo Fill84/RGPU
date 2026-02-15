@@ -38,9 +38,9 @@ type CUmemoryPool = *mut c_void;
 
 const CUDA_SUCCESS: CUresult = 0;
 const CUDA_ERROR_INVALID_VALUE: CUresult = 1;
-const CUDA_ERROR_NOT_INITIALIZED: CUresult = 3;
+const _CUDA_ERROR_NOT_INITIALIZED: CUresult = 3;
 const CUDA_ERROR_NOT_READY: CUresult = 600;
-const CUDA_ERROR_NOT_SUPPORTED: CUresult = 801;
+const _CUDA_ERROR_NOT_SUPPORTED: CUresult = 801;
 const CUDA_ERROR_UNKNOWN: CUresult = 999;
 
 static IPC_CLIENT: OnceLock<IpcClient> = OnceLock::new();

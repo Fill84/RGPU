@@ -268,7 +268,7 @@ pub struct CudaDriver {
     cu_module_get_function: FnCuModuleGetFunction,
     cu_module_get_global: FnCuModuleGetGlobal,
     cu_module_load: Option<FnCuModuleLoad>,
-    cu_module_load_data_ex: Option<FnCuModuleLoadDataEx>,
+    _cu_module_load_data_ex: Option<FnCuModuleLoadDataEx>,
     cu_module_load_fat_binary: Option<FnCuModuleLoadFatBinary>,
     // Linker
     cu_link_create: Option<FnCuLinkCreate>,
@@ -298,11 +298,11 @@ pub struct CudaDriver {
     cu_mem_alloc_managed: Option<FnCuMemAllocManaged>,
     cu_mem_alloc_pitch: Option<FnCuMemAllocPitch>,
     // Memory pools
-    cu_mem_pool_create: Option<FnCuMemPoolCreate>,
+    _cu_mem_pool_create: Option<FnCuMemPoolCreate>,
     cu_mem_pool_destroy: Option<FnCuMemPoolDestroy>,
     cu_mem_pool_trim_to: Option<FnCuMemPoolTrimTo>,
-    cu_mem_pool_set_attribute: Option<FnCuMemPoolSetAttribute>,
-    cu_mem_pool_get_attribute: Option<FnCuMemPoolGetAttribute>,
+    _cu_mem_pool_set_attribute: Option<FnCuMemPoolSetAttribute>,
+    _cu_mem_pool_get_attribute: Option<FnCuMemPoolGetAttribute>,
     cu_mem_alloc_async: Option<FnCuMemAllocAsync>,
     cu_mem_free_async: Option<FnCuMemFreeAsync>,
     cu_mem_alloc_from_pool_async: Option<FnCuMemAllocFromPoolAsync>,
@@ -409,7 +409,7 @@ impl CudaDriver {
                 cu_module_get_global: Self::load_fn(&lib, "cuModuleGetGlobal_v2")
                     .or_else(|_| Self::load_fn(&lib, "cuModuleGetGlobal"))?,
                 cu_module_load: Self::load_fn_opt(&lib, "cuModuleLoad"),
-                cu_module_load_data_ex: Self::load_fn_opt(&lib, "cuModuleLoadDataEx"),
+                _cu_module_load_data_ex: Self::load_fn_opt(&lib, "cuModuleLoadDataEx"),
                 cu_module_load_fat_binary: Self::load_fn_opt(&lib, "cuModuleLoadFatBinary"),
                 // Linker
                 cu_link_create: Self::load_fn_opt::<FnCuLinkCreate>(&lib, "cuLinkCreate_v2")
@@ -458,11 +458,11 @@ impl CudaDriver {
                 cu_mem_alloc_pitch: Self::load_fn_opt::<FnCuMemAllocPitch>(&lib, "cuMemAllocPitch_v2")
                     .or(Self::load_fn_opt(&lib, "cuMemAllocPitch")),
                 // Memory pools
-                cu_mem_pool_create: Self::load_fn_opt(&lib, "cuMemPoolCreate"),
+                _cu_mem_pool_create: Self::load_fn_opt(&lib, "cuMemPoolCreate"),
                 cu_mem_pool_destroy: Self::load_fn_opt(&lib, "cuMemPoolDestroy"),
                 cu_mem_pool_trim_to: Self::load_fn_opt(&lib, "cuMemPoolTrimTo"),
-                cu_mem_pool_set_attribute: Self::load_fn_opt(&lib, "cuMemPoolSetAttribute"),
-                cu_mem_pool_get_attribute: Self::load_fn_opt(&lib, "cuMemPoolGetAttribute"),
+                _cu_mem_pool_set_attribute: Self::load_fn_opt(&lib, "cuMemPoolSetAttribute"),
+                _cu_mem_pool_get_attribute: Self::load_fn_opt(&lib, "cuMemPoolGetAttribute"),
                 cu_mem_alloc_async: Self::load_fn_opt::<FnCuMemAllocAsync>(&lib, "cuMemAllocAsync_ptsz")
                     .or(Self::load_fn_opt(&lib, "cuMemAllocAsync")),
                 cu_mem_free_async: Self::load_fn_opt::<FnCuMemFreeAsync>(&lib, "cuMemFreeAsync_ptsz")

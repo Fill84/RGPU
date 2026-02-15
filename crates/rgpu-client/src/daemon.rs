@@ -30,8 +30,8 @@ enum TransportConn {
 /// A persistent, authenticated connection to an RGPU server.
 struct ServerConn {
     transport: TransportConn,
-    address: String,
-    token: String,
+    _address: String,
+    _token: String,
 }
 
 impl ServerConn {
@@ -289,8 +289,8 @@ fn parse_auth_result(
             );
             let conn = ServerConn {
                 transport,
-                address: endpoint.address.clone(),
-                token: endpoint.token.clone(),
+                _address: endpoint.address.clone(),
+                _token: endpoint.token.clone(),
             };
             Ok((available_gpus, conn, sid))
         }
@@ -362,8 +362,8 @@ async fn reconnect_tcp(
             Ok((
                 ServerConn {
                     transport: TransportConn::Tcp { reader, writer },
-                    address: endpoint.address.clone(),
-                    token: endpoint.token.clone(),
+                    _address: endpoint.address.clone(),
+                    _token: endpoint.token.clone(),
                 },
                 sid,
             ))
@@ -409,8 +409,8 @@ async fn reconnect_quic(
             Ok((
                 ServerConn {
                     transport: TransportConn::Quic(quic_conn),
-                    address: endpoint.address.clone(),
-                    token: endpoint.token.clone(),
+                    _address: endpoint.address.clone(),
+                    _token: endpoint.token.clone(),
                 },
                 sid,
             ))
