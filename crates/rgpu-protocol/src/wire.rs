@@ -51,6 +51,7 @@ pub fn encode_message(msg: &Message, stream_id: u32) -> Result<Vec<u8>, WireErro
         Message::CudaResponse { .. }
         | Message::VulkanResponse { .. }
         | Message::AuthResult { .. }
+        | Message::MetricsData { .. }
         | Message::Pong => FrameFlags::RESPONSE,
         _ => FrameFlags::empty(),
     };

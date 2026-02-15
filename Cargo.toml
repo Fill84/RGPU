@@ -9,6 +9,7 @@ members = [
     "crates/rgpu-vk-icd",
     "crates/rgpu-cuda-interpose",
     "crates/rgpu-common",
+    "crates/rgpu-ui",
 ]
 resolver = "2"
 
@@ -61,3 +62,7 @@ rgpu-core = { path = "crates/rgpu-core" }
 rgpu-server = { path = "crates/rgpu-server" }
 rgpu-client = { path = "crates/rgpu-client" }
 rgpu-common = { path = "crates/rgpu-common" }
+rgpu-ui = { path = "crates/rgpu-ui" }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["datepicker"] }

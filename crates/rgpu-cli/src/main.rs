@@ -75,6 +75,25 @@ enum Commands {
         #[arg(short, long, default_value = "")]
         token: String,
     },
+
+    /// Launch the RGPU desktop GUI
+    Ui {
+        /// Server address(es) to monitor (host:port)
+        #[arg(short, long)]
+        server: Vec<String>,
+
+        /// Authentication token
+        #[arg(short, long, default_value = "")]
+        token: String,
+
+        /// Configuration file path
+        #[arg(short, long, default_value = "rgpu.toml")]
+        config: String,
+
+        /// Metrics poll interval in seconds
+        #[arg(long, default_value_t = 2)]
+        poll_interval: u64,
+    },
 }
 
 #[tokio::main]
@@ -183,6 +202,29 @@ async fn main() -> anyhow::Result<()> {
             println!("  [[client.servers]]");
             println!("  address = \"<server-ip>:9876\"");
             println!("  token = \"{}\"", token);
+        }
+
+        Commands::Ui {
+            server,
+            token,
+            config,
+            poll_interval,
+        } => {
+            info!("launching RGPU UI");
+
+            // Collect servers from CLI args
+            let mut all_servers: Vec<(String, String)> = server
+                .into_iter()
+                .map(|addr| (addr, token.clone()))
+                .collect();
+
+            // Also load servers from config file
+            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);
+            for endpoint in &rgpu_config.client.servers {
+                all_servers.push((endpoint.address.clone(), endpoint.token.clone()));
+            }
+
+            rgpu_ui::launch_ui(all_servers, config, poll_interval)?;
         }
 
         Commands::Info { server, token } => {

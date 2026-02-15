@@ -69,6 +69,23 @@ pub enum Message {
     /// Batched CUDA commands for pipelining (void commands sent fire-and-forget).
     CudaBatch(Vec<CudaCommand>),
 
+    // ── Monitoring ──────────────────────────────────────────
+    /// Request server metrics snapshot.
+    QueryMetrics,
+
+    /// Server metrics response.
+    MetricsData {
+        connections_total: u64,
+        connections_active: u32,
+        requests_total: u64,
+        errors_total: u64,
+        cuda_commands: u64,
+        vulkan_commands: u64,
+        uptime_secs: u64,
+        server_id: u16,
+        server_address: String,
+    },
+
     // ── Keepalive ───────────────────────────────────────────
     Ping,
     Pong,
@@ -78,4 +95,4 @@ pub enum Message {
 }
 
 /// Current protocol version.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;

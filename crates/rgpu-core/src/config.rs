@@ -93,7 +93,7 @@ pub struct TokenEntry {
     pub max_memory: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuOrdering {
     #[default]
     LocalFirst,

@@ -27,6 +27,8 @@ pub struct ServerMetrics {
     pub errors_total: AtomicU64,
     pub cuda_commands: AtomicU64,
     pub vulkan_commands: AtomicU64,
+    pub start_time: std::time::Instant,
+    pub bind_address: parking_lot::RwLock<String>,
 }
 
 impl ServerMetrics {
@@ -38,6 +40,8 @@ impl ServerMetrics {
             errors_total: AtomicU64::new(0),
             cuda_commands: AtomicU64::new(0),
             vulkan_commands: AtomicU64::new(0),
+            start_time: std::time::Instant::now(),
+            bind_address: parking_lot::RwLock::new(String::new()),
         }
     }
 }
@@ -115,6 +119,10 @@ impl RgpuServer {
                 }
             }
         });
+
+        // Store bind address for metrics queries
+        *self.metrics.bind_address.write() =
+            format!("{}:{}", self.config.bind, self.config.port);
 
         match self.config.transport {
             TransportMode::Quic => self.run_quic(shutdown_rx).await,
@@ -639,6 +647,18 @@ impl RgpuServer {
             }
 
             Message::QueryGpus => Some(Message::GpuList(gpu_infos.to_vec())),
+
+            Message::QueryMetrics => Some(Message::MetricsData {
+                connections_total: metrics.connections_total.load(Ordering::Relaxed),
+                connections_active: metrics.connections_active.load(Ordering::Relaxed),
+                requests_total: metrics.requests_total.load(Ordering::Relaxed),
+                errors_total: metrics.errors_total.load(Ordering::Relaxed),
+                cuda_commands: metrics.cuda_commands.load(Ordering::Relaxed),
+                vulkan_commands: metrics.vulkan_commands.load(Ordering::Relaxed),
+                uptime_secs: metrics.start_time.elapsed().as_secs(),
+                server_id: session.server_id(),
+                server_address: metrics.bind_address.read().clone(),
+            }),
 
             Message::CudaCommand {
                 request_id,
