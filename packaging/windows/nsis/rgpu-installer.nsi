@@ -81,9 +81,9 @@ Section "RGPU Core (required)" SEC_CORE
   File "staging\rgpu.exe"
 
   ; Create config directory and install default config
-  CreateDirectory "$PROGRAMDATA\RGPU"
-  IfFileExists "$PROGRAMDATA\RGPU\rgpu.toml" skip_config
-    SetOutPath "$PROGRAMDATA\RGPU"
+  CreateDirectory "$COMMONAPPDATA\RGPU"
+  IfFileExists "$COMMONAPPDATA\RGPU\rgpu.toml" skip_config
+    SetOutPath "$COMMONAPPDATA\RGPU"
     File "/oname=rgpu.toml" "staging\rgpu.toml.template"
   skip_config:
 
@@ -166,7 +166,7 @@ SectionEnd
 Section /o "Windows Service (manual start)" SEC_SERVICE
   ; Create Windows Service using sc.exe
   ; Service starts manually (demand) -- user enables it explicitly
-  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$PROGRAMDATA\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
+  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$COMMONAPPDATA\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
   nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
 SectionEnd
 
@@ -223,6 +223,6 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU"
   DeleteRegKey HKLM "Software\RGPU"
 
-  ; Note: Config in $PROGRAMDATA\RGPU is intentionally NOT removed
+  ; Note: Config in $COMMONAPPDATA\RGPU is intentionally NOT removed
   ; to preserve user configuration across reinstalls
 SectionEnd
