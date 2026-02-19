@@ -3,7 +3,6 @@
 ;
 ; Prerequisites:
 ;   - NSIS 3.x installed (winget install NSIS.NSIS)
-;   - EnvVarUpdate.nsh in NSIS Include directory
 ;   - Release build artifacts in staging/ subdirectory
 ;
 ; Build: makensis /DVERSION=0.1.0 rgpu-installer.nsi
@@ -13,8 +12,9 @@
 ;---------------------------------
 !include "MUI2.nsh"
 !include "x64.nsh"
-!include "EnvVarUpdate.nsh"
 !include "FileFunc.nsh"
+!include "WordFunc.nsh"
+!include "WinMessages.nsh"
 
 ;---------------------------------
 ; General
@@ -87,8 +87,11 @@ Section "RGPU Core (required)" SEC_CORE
     File "/oname=rgpu.toml" "staging\rgpu.toml.template"
   skip_config:
 
-  ; Add to system PATH
-  ${EnvVarUpdate} $0 "PATH" "A" "HKLM" "$INSTDIR\bin"
+  ; Add to system PATH (native registry manipulation)
+  ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+  StrCpy $0 "$0;$INSTDIR\bin"
+  WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" $0
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
   ; Store installation directory
   WriteRegStr HKLM "Software\RGPU" "InstallDir" "$INSTDIR"
@@ -192,8 +195,13 @@ Section "Uninstall"
   ; Remove Vulkan ICD registry entry
   DeleteRegValue HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$INSTDIR\lib\rgpu_icd.json"
 
-  ; Remove from PATH
-  ${un.EnvVarUpdate} $0 "PATH" "R" "HKLM" "$INSTDIR\bin"
+  ; Remove from PATH (native registry manipulation)
+  ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+  ${WordReplace} $0 ";$INSTDIR\bin" "" "+" $0
+  ${WordReplace} $0 "$INSTDIR\bin;" "" "+" $0
+  ${WordReplace} $0 "$INSTDIR\bin" "" "+" $0
+  WriteRegExpandStr HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path" $0
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 
   ; Remove files
   Delete "$INSTDIR\bin\rgpu.exe"
