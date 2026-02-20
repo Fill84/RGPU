@@ -3,8 +3,8 @@
 RGPU enables sharing GPUs over the network. It exposes local GPUs as remote resources accessible by clients, supporting both **Vulkan** and **CUDA** workloads. A single `rgpu` binary handles server, client, and GUI modes.
 
 ```
-┌──────────────┐         TCP/QUIC+TLS         ┌──────────────┐
-│  Client Host │ ◄──────────────────────────► │  GPU Server  │
+┌──────────────┐         TCP/QUIC+TLS          ┌──────────────┐
+│  Client Host │ ◄───────────────────────────► │  GPU Server  │
 │              │                               │              │
 │  Application │                               │  NVIDIA GPU  │
 │      ▼       │                               │  (RTX 3070)  │
