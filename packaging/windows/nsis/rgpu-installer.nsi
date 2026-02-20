@@ -30,6 +30,9 @@ InstallDirRegKey HKLM "Software\RGPU" "InstallDir"
 RequestExecutionLevel admin
 Unicode True
 
+; User-defined variable for ProgramData path (NSIS has no $COMMONAPPDATA built-in)
+Var ProgramDataDir
+
 ;---------------------------------
 ; Version Info
 ;---------------------------------
@@ -65,6 +68,21 @@ VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 !insertmacro MUI_LANGUAGE "English"
 
 ;---------------------------------
+; Init functions
+;---------------------------------
+Function .onInit
+  ReadEnvStr $ProgramDataDir PROGRAMDATA
+  StrCmp $ProgramDataDir "" 0 +2
+    StrCpy $ProgramDataDir "C:\ProgramData"
+FunctionEnd
+
+Function un.onInit
+  ReadEnvStr $ProgramDataDir PROGRAMDATA
+  StrCmp $ProgramDataDir "" 0 +2
+    StrCpy $ProgramDataDir "C:\ProgramData"
+FunctionEnd
+
+;---------------------------------
 ; Section: Core (required)
 ;---------------------------------
 Section "RGPU Core (required)" SEC_CORE
@@ -81,9 +99,9 @@ Section "RGPU Core (required)" SEC_CORE
   File "staging\rgpu.exe"
 
   ; Create config directory and install default config
-  CreateDirectory "$COMMONAPPDATA\RGPU"
-  IfFileExists "$COMMONAPPDATA\RGPU\rgpu.toml" skip_config
-    SetOutPath "$COMMONAPPDATA\RGPU"
+  CreateDirectory "$ProgramDataDir\RGPU"
+  IfFileExists "$ProgramDataDir\RGPU\rgpu.toml" skip_config
+    SetOutPath "$ProgramDataDir\RGPU"
     File "/oname=rgpu.toml" "staging\rgpu.toml.template"
   skip_config:
 
@@ -166,7 +184,7 @@ SectionEnd
 Section /o "Windows Service (manual start)" SEC_SERVICE
   ; Create Windows Service using sc.exe
   ; Service starts manually (demand) -- user enables it explicitly
-  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$COMMONAPPDATA\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
+  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
   nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
 SectionEnd
 
@@ -223,6 +241,6 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU"
   DeleteRegKey HKLM "Software\RGPU"
 
-  ; Note: Config in $COMMONAPPDATA\RGPU is intentionally NOT removed
+  ; Note: Config in $ProgramDataDir\RGPU is intentionally NOT removed
   ; to preserve user configuration across reinstalls
 SectionEnd
