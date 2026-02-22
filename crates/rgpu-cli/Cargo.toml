@@ -26,9 +26,10 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 rgpu-ui = { workspace = true }
+libloading = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_System_Registry"] }
 
 # ─── Linux .deb packaging (cargo-deb) ───
 [package.metadata.deb]

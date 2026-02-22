@@ -4,6 +4,8 @@
 use clap::{Parser, Subcommand};
 use tracing::info;
 
+mod verify;
+
 /// Re-attach to the parent console on Windows so CLI subcommands can print output.
 /// This is needed because `#![windows_subsystem = "windows"]` detaches stdout/stderr.
 #[cfg(windows)]
@@ -90,6 +92,17 @@ enum Commands {
         /// Authentication token
         #[arg(short, long, default_value = "")]
         token: String,
+    },
+
+    /// Verify the RGPU client installation (config, daemon, drivers, connectivity)
+    Verify {
+        /// Configuration file path (auto-discovers from system location if not specified)
+        #[arg(short, long)]
+        config: Option<String>,
+
+        /// Output as JSON instead of human-readable
+        #[arg(long)]
+        json: bool,
     },
 
     /// Launch the RGPU desktop GUI
@@ -251,6 +264,11 @@ async fn main() -> anyhow::Result<()> {
             }
 
             rgpu_ui::launch_ui(all_servers, config, poll_interval)?;
+        }
+
+        Some(Commands::Verify { config, json }) => {
+            let config_path = config.unwrap_or_else(rgpu_core::config::default_config_path);
+            verify::run_verify(&config_path, json).await?;
         }
 
         Some(Commands::Info { server, token }) => {

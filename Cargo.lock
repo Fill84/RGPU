@@ -2641,6 +2641,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libloading",
  "rand 0.8.5",
  "rgpu-client",
  "rgpu-common",
