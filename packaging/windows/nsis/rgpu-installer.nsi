@@ -85,26 +85,6 @@ Function un.onInit
 FunctionEnd
 
 ;---------------------------------
-; Component conflict warning
-;---------------------------------
-Function .onSelChange
-  ; Warn if both Server Service and CUDA Interpose are selected
-  SectionGetFlags ${SEC_SERVICE} $0
-  SectionGetFlags ${SEC_CUDA} $1
-  IntOp $0 $0 & 1
-  IntOp $1 $1 & 1
-  IntCmp $0 0 no_conflict
-  IntCmp $1 0 no_conflict
-    MessageBox MB_YESNO|MB_ICONWARNING \
-      "WARNING: You have selected both 'CUDA System-Wide Interpose' and 'Server Service'.$\r$\n$\r$\nInstalling the CUDA interpose on a server machine will replace nvcuda.dll in System32, which breaks the server's direct GPU access.$\r$\n$\r$\nOnly install CUDA interpose on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
-    ; Deselect CUDA if user says No
-    SectionGetFlags ${SEC_CUDA} $0
-    IntOp $0 $0 & 0xFFFFFFFE
-    SectionSetFlags ${SEC_CUDA} $0
-  no_conflict:
-FunctionEnd
-
-;---------------------------------
 ; Section: Core (required)
 ;---------------------------------
 Section "RGPU Core (required)" SEC_CORE
@@ -246,6 +226,27 @@ Section /o "Client Daemon Service (auto-start)" SEC_CLIENT_SERVICE
   ; Start the service immediately
   nsExec::ExecToLog 'sc start "RGPU Client"'
 SectionEnd
+
+;---------------------------------
+; Component conflict warning
+; (must be after all Section definitions so SEC_* identifiers are resolved)
+;---------------------------------
+Function .onSelChange
+  ; Warn if both Server Service and CUDA Interpose are selected
+  SectionGetFlags ${SEC_SERVICE} $0
+  SectionGetFlags ${SEC_CUDA} $1
+  IntOp $0 $0 & 1
+  IntOp $1 $1 & 1
+  IntCmp $0 0 no_conflict
+  IntCmp $1 0 no_conflict
+    MessageBox MB_YESNO|MB_ICONWARNING \
+      "WARNING: You have selected both 'CUDA System-Wide Interpose' and 'Server Service'.$\r$\n$\r$\nInstalling the CUDA interpose on a server machine will replace nvcuda.dll in System32, which breaks the server's direct GPU access.$\r$\n$\r$\nOnly install CUDA interpose on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
+    ; Deselect CUDA if user says No
+    SectionGetFlags ${SEC_CUDA} $0
+    IntOp $0 $0 & 0xFFFFFFFE
+    SectionSetFlags ${SEC_CUDA} $0
+  no_conflict:
+FunctionEnd
 
 ;---------------------------------
 ; Section Descriptions
