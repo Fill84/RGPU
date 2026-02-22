@@ -61,6 +61,7 @@ jobs:
           Copy-Item "target\release\rgpu_cuda_interpose.dll" "$staging\"
           Copy-Item "target\release\rgpu_vk_icd.dll" "$staging\"
           Copy-Item "packaging\config\rgpu.toml.template" "$staging\"
+          Copy-Item "icon.ico" "$staging\"
 
       - name: Build NSIS installer
         run: |
