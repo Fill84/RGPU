@@ -239,7 +239,7 @@ Function .onSelChange
   IntOp $1 $1 & 1
   IntCmp $0 0 no_conflict
   IntCmp $1 0 no_conflict
-    MessageBox MB_YESNO|MB_ICONWARNING "WARNING: Installing CUDA interpose on a server machine will replace nvcuda.dll and break direct GPU access. Only install on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION "WARNING: Installing CUDA interpose on a server machine will replace nvcuda.dll and break direct GPU access. Only install on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
     ; Deselect CUDA if user says No
     SectionGetFlags ${SEC_CUDA} $0
     IntOp $0 $0 & 0xFFFFFFFE
