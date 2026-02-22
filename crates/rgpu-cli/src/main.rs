@@ -1,5 +1,21 @@
+// Hide console window on Windows when launching the GUI (e.g. double-click)
+#![windows_subsystem = "windows"]
+
 use clap::{Parser, Subcommand};
 use tracing::info;
+
+/// Re-attach to the parent console on Windows so CLI subcommands can print output.
+/// This is needed because `#![windows_subsystem = "windows"]` detaches stdout/stderr.
+#[cfg(windows)]
+fn attach_parent_console() {
+    unsafe {
+        // ATTACH_PARENT_PROCESS = -1 (0xFFFFFFFF)
+        windows_sys::Win32::System::Console::AttachConsole(0xFFFFFFFF);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
 
 #[derive(Parser)]
 #[command(name = "rgpu")]
@@ -101,6 +117,11 @@ async fn main() -> anyhow::Result<()> {
     rgpu_common::init_logging();
 
     let cli = Cli::parse();
+
+    // For CLI subcommands, re-attach to the parent console so stdout/stderr work
+    if cli.command.is_some() {
+        attach_parent_console();
+    }
 
     match cli.command {
         Some(Commands::Server {

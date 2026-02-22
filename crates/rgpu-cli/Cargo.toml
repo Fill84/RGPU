@@ -27,6 +27,9 @@ anyhow = { workspace = true }
 rand = { workspace = true }
 rgpu-ui = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
+
 # ─── Linux .deb packaging (cargo-deb) ───
 [package.metadata.deb]
 maintainer = "RGPU Project"
