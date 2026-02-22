@@ -58,16 +58,29 @@ pub async fn start_ipc_listener(
                     }
                 };
 
-                if let Some(response) = handler(msg) {
-                    match wire::encode_message(&response, 0) {
-                        Ok(frame) => {
-                            if writer.write_all(&frame).await.is_err() {
-                                break;
-                            }
+                let response = match handler(msg) {
+                    Some(resp) => resp,
+                    None => {
+                        // Fallback: send an error response so the app doesn't hang
+                        error!("IPC handler returned None, sending error response");
+                        Message::CudaResponse {
+                            request_id: rgpu_protocol::messages::RequestId(0),
+                            response: rgpu_protocol::cuda_commands::CudaResponse::Error {
+                                code: 999,
+                                message: "internal daemon error".to_string(),
+                            },
                         }
-                        Err(e) => {
-                            error!("IPC encode error: {}", e);
+                    }
+                };
+
+                match wire::encode_message(&response, 0) {
+                    Ok(frame) => {
+                        if writer.write_all(&frame).await.is_err() {
+                            break;
                         }
+                    }
+                    Err(e) => {
+                        error!("IPC encode error: {}", e);
                     }
                 }
             }

@@ -11,6 +11,7 @@ rgpu-core = { workspace = true }
 rgpu-common = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 egui_extras = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

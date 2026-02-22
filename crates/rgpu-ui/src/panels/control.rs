@@ -80,6 +80,33 @@ fn show_server_control(ui: &mut Ui, state: &mut UiState) {
                 state.server_stop_requested = true;
                 state.local_server_status = LocalServerStatus::Stopping;
             }
+
+            // Show embedded server info
+            ui.add_space(4.0);
+            if !state.embedded_server_gpus.is_empty() {
+                ui.label(
+                    RichText::new(format!(
+                        "GPUs: {} ({})",
+                        state.embedded_server_gpus.len(),
+                        state.embedded_server_gpus
+                            .iter()
+                            .map(|g| g.device_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                    .small(),
+                );
+            }
+            if let Some(ref metrics) = state.embedded_server_metrics {
+                ui.label(
+                    RichText::new(format!(
+                        "Uptime: {}s | Requests: {} | Active connections: {}",
+                        metrics.uptime_secs, metrics.requests_total, metrics.connections_active
+                    ))
+                    .small()
+                    .color(Color32::GRAY),
+                );
+            }
         }
         _ => {
             ui.add_enabled(false, egui::Button::new("Please wait..."));

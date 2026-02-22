@@ -8,6 +8,11 @@ use rgpu_protocol::handle::NetworkHandle;
 
 use rgpu_core::config::{GpuOrdering, ServerEndpoint};
 
+/// Special server index for local GPUs (not routed over network).
+pub const LOCAL_SERVER_INDEX: usize = usize::MAX;
+/// Special server ID for local GPUs.
+pub const LOCAL_SERVER_ID: u16 = u16::MAX;
+
 /// Represents metadata about a connection to one RGPU server.
 pub struct ServerConnection {
     pub endpoint: ServerEndpoint,
@@ -183,6 +188,35 @@ impl GpuPoolManager {
     /// Number of connected servers.
     pub async fn server_count(&self) -> usize {
         self.servers.read().await.len()
+    }
+
+    /// Add local GPUs to the pool (for include_local_gpus).
+    /// These GPUs are executed directly via local executors, not forwarded over the network.
+    pub async fn add_local_gpus(&self, gpus: Vec<GpuInfo>) {
+        // Register the LOCAL_SERVER_ID mapping
+        self.server_id_to_index
+            .write()
+            .await
+            .insert(LOCAL_SERVER_ID, LOCAL_SERVER_INDEX);
+
+        let mut pool = self.gpu_pool.write().await;
+        let count = gpus.len();
+        for gpu in gpus {
+            let pool_index = pool.len() as u32;
+            pool.push(GpuPoolEntry {
+                pool_index,
+                server_index: LOCAL_SERVER_INDEX,
+                server_device_index: gpu.server_device_index,
+                info: gpu,
+                is_local: true,
+            });
+        }
+
+        info!(
+            "added {} local GPU(s) to pool (total: {})",
+            count,
+            pool.len()
+        );
     }
 
     /// Apply GPU ordering based on the configured preference.

@@ -46,6 +46,8 @@ VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 ;---------------------------------
 ; Interface Settings
 ;---------------------------------
+!define MUI_ICON "staging\icon.ico"
+!define MUI_UNICON "staging\icon.ico"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Welcome to RGPU ${VERSION} Setup"
 !define MUI_WELCOMEPAGE_TEXT "This wizard will install RGPU (Remote GPU Sharing) on your computer.$\r$\n$\r$\nRGPU enables sharing GPUs over the network, supporting both Vulkan and CUDA workloads.$\r$\n$\r$\nClick Next to continue."
@@ -94,9 +96,10 @@ Section "RGPU Core (required)" SEC_CORE
     Abort
   ${EndIf}
 
-  ; Install binary
+  ; Install binary and icon
   SetOutPath "$INSTDIR\bin"
   File "staging\rgpu.exe"
+  File "staging\icon.ico"
 
   ; Create config directory and install default config
   CreateDirectory "$ProgramDataDir\RGPU"
@@ -128,6 +131,8 @@ Section "RGPU Core (required)" SEC_CORE
     "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU" \
     "Publisher" "RGPU Project"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU" \
+    "DisplayIcon" "$INSTDIR\bin\icon.ico"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU" \
     "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU" \
@@ -141,7 +146,11 @@ Section "RGPU Core (required)" SEC_CORE
 
   ; Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\RGPU"
+  CreateShortCut "$SMPROGRAMS\RGPU\RGPU.lnk" "$INSTDIR\bin\rgpu.exe" "" "$INSTDIR\bin\icon.ico" 0
   CreateShortCut "$SMPROGRAMS\RGPU\Uninstall RGPU.lnk" "$INSTDIR\uninstall.exe"
+
+  ; Desktop shortcut
+  CreateShortCut "$DESKTOP\RGPU.lnk" "$INSTDIR\bin\rgpu.exe" "" "$INSTDIR\bin\icon.ico" 0
 SectionEnd
 
 ;---------------------------------
@@ -223,6 +232,7 @@ Section "Uninstall"
 
   ; Remove files
   Delete "$INSTDIR\bin\rgpu.exe"
+  Delete "$INSTDIR\bin\icon.ico"
   Delete "$INSTDIR\lib\rgpu_cuda_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_vk_icd.dll"
   Delete "$INSTDIR\lib\rgpu_icd.json"
@@ -233,9 +243,11 @@ Section "Uninstall"
   RMDir "$INSTDIR\lib"
   RMDir "$INSTDIR"
 
-  ; Remove Start Menu shortcuts
+  ; Remove Start Menu and Desktop shortcuts
+  Delete "$SMPROGRAMS\RGPU\RGPU.lnk"
   Delete "$SMPROGRAMS\RGPU\Uninstall RGPU.lnk"
   RMDir "$SMPROGRAMS\RGPU"
+  Delete "$DESKTOP\RGPU.lnk"
 
   ; Remove registry keys
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RGPU"

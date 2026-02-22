@@ -81,10 +81,34 @@ impl IpcClient {
 
 impl IpcConnection {
     fn connect(path: &str) -> Result<Self, String> {
+        const MAX_RETRIES: u32 = 3;
+        const RETRY_DELAY_MS: u64 = 500;
+
+        let mut last_err = String::new();
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+            }
+
+            match Self::try_connect(path) {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    last_err = e;
+                }
+            }
+        }
+
+        Err(format!(
+            "failed to connect to RGPU daemon at {} after {} attempts: {}",
+            path, MAX_RETRIES, last_err
+        ))
+    }
+
+    fn try_connect(path: &str) -> Result<Self, String> {
         #[cfg(unix)]
         {
             let stream = std::os::unix::net::UnixStream::connect(path)
-                .map_err(|e| format!("failed to connect to RGPU daemon at {}: {}", path, e))?;
+                .map_err(|e| format!("{}", e))?;
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(30)))
                 .ok();
@@ -97,7 +121,7 @@ impl IpcConnection {
                 .read(true)
                 .write(true)
                 .open(path)
-                .map_err(|e| format!("failed to connect to RGPU daemon at {}: {}", path, e))?;
+                .map_err(|e| format!("{}", e))?;
             Ok(Self { pipe })
         }
     }

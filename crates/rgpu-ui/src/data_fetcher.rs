@@ -134,8 +134,8 @@ async fn connect_and_auth(
 struct EmbeddedServer {
     shutdown_tx: watch::Sender<bool>,
     task_handle: TokioJoinHandle<()>,
-    /// The address of the embedded server (used to identify its ServerState entry).
-    address: String,
+    /// Direct reference to the server for monitoring without TCP.
+    server_ref: Arc<rgpu_server::RgpuServer>,
 }
 
 /// Main fetcher loop: manages embedded server, dynamic connections, and polls periodically.
@@ -163,13 +163,34 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
         }
 
         // --- Handle embedded server lifecycle ---
-        handle_server_lifecycle(&state, &ctx, &mut embedded_server, &mut connections).await;
+        handle_server_lifecycle(&state, &ctx, &mut embedded_server).await;
 
         // --- Handle dynamic connections ---
         handle_pending_connections(&state, &mut connections);
         handle_disconnect_requests(&state, &mut connections);
 
-        // --- Poll all servers ---
+        // --- Poll embedded server directly (no TCP) ---
+        if let Some(ref srv) = embedded_server {
+            let metrics_ref = srv.server_ref.metrics();
+            let uptime = metrics_ref.start_time.elapsed().as_secs();
+            let snapshot = MetricsSnapshot {
+                timestamp: std::time::Instant::now(),
+                connections_total: metrics_ref.connections_total.load(std::sync::atomic::Ordering::Relaxed),
+                connections_active: metrics_ref.connections_active.load(std::sync::atomic::Ordering::Relaxed),
+                requests_total: metrics_ref.requests_total.load(std::sync::atomic::Ordering::Relaxed),
+                errors_total: metrics_ref.errors_total.load(std::sync::atomic::Ordering::Relaxed),
+                cuda_commands: metrics_ref.cuda_commands.load(std::sync::atomic::Ordering::Relaxed),
+                vulkan_commands: metrics_ref.vulkan_commands.load(std::sync::atomic::Ordering::Relaxed),
+                uptime_secs: uptime,
+            };
+            let gpu_infos = srv.server_ref.gpu_infos().to_vec();
+
+            let mut st = state.lock().unwrap();
+            st.embedded_server_gpus = gpu_infos;
+            st.embedded_server_metrics = Some(snapshot);
+        }
+
+        // --- Poll all remote servers ---
         let server_count = {
             let st = state.lock().unwrap();
             st.servers.len()
@@ -305,6 +326,9 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
     if let Some(srv) = embedded_server.take() {
         let _ = srv.shutdown_tx.send(true);
         let _ = srv.task_handle.await;
+        let mut st = state.lock().unwrap();
+        st.embedded_server_gpus.clear();
+        st.embedded_server_metrics = None;
     }
 }
 
@@ -313,7 +337,6 @@ async fn handle_server_lifecycle(
     state: &Arc<Mutex<UiState>>,
     ctx: &egui::Context,
     embedded_server: &mut Option<EmbeddedServer>,
-    connections: &mut Vec<Option<ServerConnection>>,
 ) {
     let (start_requested, stop_requested) = {
         let st = state.lock().unwrap();
@@ -357,37 +380,30 @@ async fn handle_server_lifecycle(
         // Create shutdown channel
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        // Spawn the server
-        let server = rgpu_server::RgpuServer::new(server_config, tokens);
+        // Spawn the server (wrapped in Arc for direct monitoring)
+        let server = Arc::new(rgpu_server::RgpuServer::new(server_config, tokens));
+        let server_for_task = server.clone();
         let task_handle = tokio::spawn(async move {
-            if let Err(e) = server.run_with_shutdown(shutdown_rx).await {
+            if let Err(e) = server_for_task.run_with_shutdown(shutdown_rx).await {
                 error!("embedded server error: {}", e);
             }
         });
 
         info!("embedded server starting on {}", address);
 
-        // Add a self-monitoring connection entry
-        let token = {
-            let st = state.lock().unwrap();
-            st.local_server_config
-                .tokens
-                .first()
-                .map(|t| t.token.clone())
-                .unwrap_or_default()
-        };
-
+        // Set status to running and populate initial GPU info directly (no TCP self-connect)
         {
+            let gpu_infos = server.gpu_infos().to_vec();
             let mut st = state.lock().unwrap();
             st.local_server_status = LocalServerStatus::Running;
-            st.servers.push(ServerState::new(address.clone(), token));
+            st.embedded_server_gpus = gpu_infos;
+            st.embedded_server_metrics = None;
         }
-        connections.push(None);
 
         *embedded_server = Some(EmbeddedServer {
             shutdown_tx,
             task_handle,
-            address,
+            server_ref: server,
         });
 
         // Short delay to let the server start before we try to connect
@@ -413,18 +429,10 @@ async fn handle_server_lifecycle(
             )
             .await;
 
-            // Remove the self-monitoring connection
+            // Clear embedded server monitoring data
             let mut st = state.lock().unwrap();
-            if let Some(idx) = st
-                .servers
-                .iter()
-                .position(|s| s.address == srv.address)
-            {
-                st.servers.remove(idx);
-                if idx < connections.len() {
-                    connections.remove(idx);
-                }
-            }
+            st.embedded_server_gpus.clear();
+            st.embedded_server_metrics = None;
             st.local_server_status = LocalServerStatus::Stopped;
         }
         ctx.request_repaint();

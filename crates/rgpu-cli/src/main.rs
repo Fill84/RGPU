@@ -7,7 +7,7 @@ use tracing::info;
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -103,14 +103,14 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Server {
+        Some(Commands::Server {
             port,
             bind,
             cert,
             key,
             config,
             pid_file,
-        } => {
+        }) => {
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -140,12 +140,12 @@ async fn main() -> anyhow::Result<()> {
             result?;
         }
 
-        Commands::Client {
+        Some(Commands::Client {
             server,
             token,
             config,
             pid_file,
-        } => {
+        }) => {
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -167,9 +167,11 @@ async fn main() -> anyhow::Result<()> {
             // Merge with config file
             let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);
             client_config.servers.extend(rgpu_config.client.servers);
+            client_config.include_local_gpus = rgpu_config.client.include_local_gpus;
+            client_config.gpu_ordering = rgpu_config.client.gpu_ordering;
 
-            if client_config.servers.is_empty() {
-                anyhow::bail!("no servers configured. Use --server or add servers to rgpu.toml");
+            if client_config.servers.is_empty() && !client_config.include_local_gpus {
+                anyhow::bail!("no servers configured and include_local_gpus is false. Use --server or add servers to rgpu.toml");
             }
 
             let daemon = rgpu_client::ClientDaemon::new(client_config);
@@ -185,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
             result?;
         }
 
-        Commands::Token { name } => {
+        Some(Commands::Token { name }) => {
             let token = rgpu_transport::auth::generate_token(32);
             println!("Generated RGPU token for '{}':", name);
             println!();
@@ -204,12 +206,12 @@ async fn main() -> anyhow::Result<()> {
             println!("  token = \"{}\"", token);
         }
 
-        Commands::Ui {
+        Some(Commands::Ui {
             server,
             token,
             config,
             poll_interval,
-        } => {
+        }) => {
             info!("launching RGPU UI");
 
             // Collect servers from CLI args
@@ -227,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
             rgpu_ui::launch_ui(all_servers, config, poll_interval)?;
         }
 
-        Commands::Info { server, token } => {
+        Some(Commands::Info { server, token }) => {
             info!("querying GPU info from {}", server);
 
             use tokio::io::AsyncWriteExt;
@@ -305,6 +307,19 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("Unexpected response from server");
                 }
             }
+        }
+
+        None => {
+            // Default: launch UI when no subcommand is given (e.g. double-click on Windows/macOS)
+            info!("launching RGPU UI (default)");
+            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default("rgpu.toml");
+            let servers: Vec<(String, String)> = rgpu_config
+                .client
+                .servers
+                .iter()
+                .map(|s| (s.address.clone(), s.token.clone()))
+                .collect();
+            rgpu_ui::launch_ui(servers, "rgpu.toml".to_string(), 2)?;
         }
     }
 

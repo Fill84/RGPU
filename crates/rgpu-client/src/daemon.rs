@@ -16,7 +16,7 @@ use rgpu_protocol::wire;
 use rgpu_transport::auth;
 use rgpu_transport::quic::QuicConnection;
 
-use crate::pool_manager::{ConnectionStatus, GpuPoolManager};
+use crate::pool_manager::{ConnectionStatus, GpuPoolManager, LOCAL_SERVER_ID};
 
 /// Transport-specific connection variant.
 enum TransportConn {
@@ -58,23 +58,54 @@ impl ServerConn {
 pub struct ClientDaemon {
     config: ClientConfig,
     pool_manager: Arc<GpuPoolManager>,
-    /// Cached GPU info from connected servers
+    /// Cached GPU info from connected servers (and local GPUs)
     cached_gpus: Arc<tokio::sync::RwLock<Vec<GpuInfo>>>,
     /// Persistent server connections (one per server, behind Mutex for exclusive access)
     server_conns: Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     /// Server endpoints for reconnection
     endpoints: Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
+    /// Local CUDA executor for include_local_gpus (executes CUDA commands on the client's own GPU)
+    local_cuda_executor: Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
+    /// Local Vulkan executor for include_local_gpus (executes Vulkan commands on the client's own GPU)
+    local_vulkan_executor: Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    /// Local session for handle allocation on local GPU
+    local_session: Option<Arc<rgpu_server::session::Session>>,
 }
 
 impl ClientDaemon {
     pub fn new(config: ClientConfig) -> Self {
         let ordering = config.gpu_ordering.clone();
+
+        // If include_local_gpus is enabled, discover and initialize local GPU executors
+        let (local_cuda, local_vulkan, local_session) = if config.include_local_gpus {
+            let local_gpus = rgpu_server::gpu_discovery::discover_gpus(LOCAL_SERVER_ID);
+            if !local_gpus.is_empty() {
+                info!("discovered {} local GPU(s) for direct execution", local_gpus.len());
+                let cuda = Arc::new(rgpu_server::cuda_executor::CudaExecutor::new(local_gpus));
+                let vulkan = Arc::new(rgpu_server::vulkan_executor::VulkanExecutor::new());
+                let session = Arc::new(rgpu_server::session::Session::new(
+                    0,
+                    LOCAL_SERVER_ID,
+                    "local".to_string(),
+                ));
+                (Some(cuda), Some(vulkan), Some(session))
+            } else {
+                info!("include_local_gpus enabled but no local GPUs found");
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
+        };
+
         Self {
             config,
             pool_manager: Arc::new(GpuPoolManager::new(ordering)),
             cached_gpus: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             server_conns: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             endpoints: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            local_cuda_executor: local_cuda,
+            local_vulkan_executor: local_vulkan,
+            local_session,
         }
     }
 
@@ -129,7 +160,17 @@ impl ClientDaemon {
             }
         }
 
-        // Apply GPU ordering after all servers are connected
+        // Add local GPUs to pool if include_local_gpus is enabled
+        if self.config.include_local_gpus {
+            let local_gpus = rgpu_server::gpu_discovery::discover_gpus(LOCAL_SERVER_ID);
+            if !local_gpus.is_empty() {
+                self.pool_manager.add_local_gpus(local_gpus.clone()).await;
+                self.cached_gpus.write().await.extend(local_gpus.clone());
+                info!("added {} local GPU(s) to pool", local_gpus.len());
+            }
+        }
+
+        // Apply GPU ordering after all servers and local GPUs are added
         self.pool_manager.apply_ordering().await;
 
         let total_gpus = self.cached_gpus.read().await.len();
@@ -149,11 +190,18 @@ impl ClientDaemon {
         let server_conns = self.server_conns.clone();
         let endpoints = self.endpoints.clone();
         let pool_manager = self.pool_manager.clone();
+        let local_cuda = self.local_cuda_executor.clone();
+        let local_vulkan = self.local_vulkan_executor.clone();
+        let local_session = self.local_session.clone();
 
         info!("starting IPC listener on {}", ipc_path);
 
         let ipc_future = crate::ipc::start_ipc_listener(&ipc_path, move |msg| {
-            handle_ipc_message(&cached_gpus, &server_conns, &endpoints, &pool_manager, msg)
+            handle_ipc_message(
+                &cached_gpus, &server_conns, &endpoints, &pool_manager,
+                &local_cuda, &local_vulkan, &local_session,
+                msg,
+            )
         });
 
         tokio::select! {
@@ -680,22 +728,26 @@ async fn resolve_server_index(
 // ── IPC Message Handler ──────────────────────────────────────────────
 
 /// Handle an IPC message from a local application (Vulkan ICD or CUDA interpose lib).
+/// Always returns a valid response Message - never returns None which would hang the app.
 fn handle_ipc_message(
     cached_gpus: &Arc<tokio::sync::RwLock<Vec<GpuInfo>>>,
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
+    local_cuda_executor: &Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
     msg: Message,
 ) -> Option<Message> {
+    // Use block_in_place to bridge sync IPC to async forwarding without deadlocks
     match msg {
         Message::QueryGpus => {
             let gpus = cached_gpus.clone();
-            let rt = tokio::runtime::Handle::try_current().ok()?;
-            let gpu_list = std::thread::spawn(move || {
-                rt.block_on(async { gpus.read().await.clone() })
-            })
-            .join()
-            .ok()?;
+            let gpu_list = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    gpus.read().await.clone()
+                })
+            });
             Some(Message::GpuList(gpu_list))
         }
 
@@ -706,16 +758,18 @@ fn handle_ipc_message(
             let conns = server_conns.clone();
             let eps = endpoints.clone();
             let pm = pool_manager.clone();
-            let rt = tokio::runtime::Handle::try_current().ok()?;
+            let local_cuda = local_cuda_executor.clone();
+            let local_sess = local_session.clone();
 
-            let response = std::thread::spawn(move || {
-                rt.block_on(async {
-                    forward_cuda_command_pooled(&conns, &eps, &pm, request_id, command).await
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    forward_cuda_command_pooled(
+                        &conns, &eps, &pm,
+                        &local_cuda, &local_sess,
+                        request_id, command,
+                    ).await
                 })
-            })
-            .join()
-            .ok()?;
-
+            });
             Some(response)
         }
 
@@ -726,48 +780,75 @@ fn handle_ipc_message(
             let conns = server_conns.clone();
             let eps = endpoints.clone();
             let pm = pool_manager.clone();
-            let rt = tokio::runtime::Handle::try_current().ok()?;
+            let local_vk = local_vulkan_executor.clone();
+            let local_sess = local_session.clone();
 
-            let response = std::thread::spawn(move || {
-                rt.block_on(async {
-                    forward_vulkan_command_pooled(&conns, &eps, &pm, request_id, command).await
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    forward_vulkan_command_pooled(
+                        &conns, &eps, &pm,
+                        &local_vk, &local_sess,
+                        request_id, command,
+                    ).await
                 })
-            })
-            .join()
-            .ok()?;
-
+            });
             Some(response)
         }
 
         Message::CudaBatch(commands) => {
-            // Forward the batch as a single message to the appropriate server.
             let conns = server_conns.clone();
             let eps = endpoints.clone();
             let pm = pool_manager.clone();
-            let rt = tokio::runtime::Handle::try_current().ok()?;
+            let local_cuda = local_cuda_executor.clone();
+            let local_sess = local_session.clone();
 
-            let response = std::thread::spawn(move || {
-                rt.block_on(async {
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
                     // Determine server from first command in batch
                     let routing_handle = commands.first()
                         .and_then(|cmd| extract_cuda_routing_handle(cmd));
                     let server_idx = resolve_server_index(&pm, routing_handle).await;
+
+                    // Check if this batch targets local GPU
+                    if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+                        if let (Some(executor), Some(session)) = (&local_cuda, &local_sess) {
+                            let mut last_error = None;
+                            for cmd in commands {
+                                let response = executor.execute(session, cmd);
+                                if let CudaResponse::Error { .. } = &response {
+                                    last_error = Some(Message::CudaResponse {
+                                        request_id: RequestId(0),
+                                        response,
+                                    });
+                                }
+                            }
+                            return last_error.unwrap_or_else(|| Message::CudaResponse {
+                                request_id: RequestId(0),
+                                response: CudaResponse::Success,
+                            });
+                        }
+                        return make_error_response(RequestId(0), true, "local GPU not available");
+                    }
+
                     let batch_msg = Message::CudaBatch(commands);
                     let request_id = RequestId(0);
                     forward_to_server(&conns, &eps, server_idx, request_id, &batch_msg, true).await
                 })
-            })
-            .join()
-            .ok()?;
-
+            });
             Some(response)
         }
 
         Message::Ping => Some(Message::Pong),
 
         _ => {
-            warn!("unhandled IPC message");
-            None
+            warn!("unhandled IPC message type");
+            Some(Message::CudaResponse {
+                request_id: RequestId(0),
+                response: CudaResponse::Error {
+                    code: 999,
+                    message: "unhandled message type".to_string(),
+                },
+            })
         }
     }
 }
@@ -776,10 +857,13 @@ fn handle_ipc_message(
 
 /// Forward a CUDA command using the pooled persistent connection.
 /// Routes to the correct server based on handle's server_id.
+/// If the target is the local GPU, executes directly via the local executor.
 async fn forward_cuda_command_pooled(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
+    local_cuda_executor: &Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: CudaCommand,
 ) -> Message {
@@ -798,6 +882,18 @@ async fn forward_cuda_command_pooled(
             .server_for_pool_ordinal(*ordinal as u32)
             .await
         {
+            // Check if this is a local GPU
+            if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+                if let (Some(executor), Some(session)) = (local_cuda_executor, local_session) {
+                    let local_cmd = CudaCommand::DeviceGet {
+                        ordinal: server_local_ordinal as i32,
+                    };
+                    let response = executor.execute(session, local_cmd);
+                    return Message::CudaResponse { request_id, response };
+                }
+                return make_error_response(request_id, true, "local GPU not available");
+            }
+
             let remapped_cmd = CudaCommand::DeviceGet {
                 ordinal: server_local_ordinal as i32,
             };
@@ -813,14 +909,23 @@ async fn forward_cuda_command_pooled(
         // Fallback: forward as-is to default server
     }
 
-    let msg = Message::CudaCommand {
-        request_id,
-        command: command.clone(),
-    };
-
     // Determine target server from handle
     let routing_handle = extract_cuda_routing_handle(&command);
     let server_idx = resolve_server_index(pool_manager, routing_handle).await;
+
+    // Check if this targets the local GPU
+    if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+        if let (Some(executor), Some(session)) = (local_cuda_executor, local_session) {
+            let response = executor.execute(session, command);
+            return Message::CudaResponse { request_id, response };
+        }
+        return make_error_response(request_id, true, "local GPU not available");
+    }
+
+    let msg = Message::CudaCommand {
+        request_id,
+        command,
+    };
 
     forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, true).await
 }
@@ -844,68 +949,98 @@ async fn forward_cuda_to_server(
 
 /// Forward a Vulkan command using the pooled persistent connection.
 /// Routes to the correct server based on handle's server_id.
+/// If the target is the local GPU, executes directly via the local executor.
 async fn forward_vulkan_command_pooled(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: VulkanCommand,
 ) -> Message {
-    // Broadcast commands: CreateInstance goes to all servers, merge responses
+    // Broadcast commands: CreateInstance goes to all servers AND local executor
     if matches!(command, VulkanCommand::CreateInstance { .. }) {
-        return broadcast_vulkan_create_instance(server_conns, endpoints, pool_manager, request_id, &command).await;
+        return broadcast_vulkan_create_instance(
+            server_conns, endpoints, pool_manager,
+            local_vulkan_executor, local_session,
+            request_id, &command,
+        ).await;
     }
 
-    // EnumeratePhysicalDevices: merge from all servers that share the instance
+    // EnumeratePhysicalDevices: merge from all servers AND local
     if let VulkanCommand::EnumeratePhysicalDevices { instance } = &command {
         return broadcast_vulkan_enumerate_physical_devices(
-            server_conns,
-            endpoints,
-            pool_manager,
-            request_id,
-            *instance,
+            server_conns, endpoints, pool_manager,
+            local_vulkan_executor, local_session,
+            request_id, *instance,
         )
         .await;
     }
 
-    let msg = Message::VulkanCommand {
-        request_id,
-        command: command.clone(),
-    };
-
     // Determine target server from handle
     let routing_handle = extract_vulkan_routing_handle(&command);
     let server_idx = resolve_server_index(pool_manager, routing_handle).await;
+
+    // Check if this targets the local GPU
+    if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+        if let (Some(executor), Some(session)) = (local_vulkan_executor, local_session) {
+            let response = executor.execute(session, command);
+            return Message::VulkanResponse { request_id, response };
+        }
+        return make_error_response(request_id, false, "local Vulkan not available");
+    }
+
+    let msg = Message::VulkanCommand {
+        request_id,
+        command,
+    };
 
     forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, false).await
 }
 
 // ── Broadcast Vulkan Commands ────────────────────────────────────────
 
-/// Send CreateInstance to all connected servers. Return the first successful handle.
+/// Send CreateInstance to all connected servers (and local executor if available).
+/// Return the first successful handle.
 /// In multi-server mode, each server creates its own VkInstance.
 /// The client tracks which instance handle belongs to which server via the NetworkHandle.
 async fn broadcast_vulkan_create_instance(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: &VulkanCommand,
 ) -> Message {
     let server_indices = pool_manager.all_connected_server_indices().await;
+    let has_local = local_vulkan_executor.is_some() && local_session.is_some();
 
-    if server_indices.is_empty() {
+    if server_indices.is_empty() && !has_local {
         return Message::VulkanResponse {
             request_id,
             response: VulkanResponse::Error {
                 code: -3,
-                message: "no servers connected".to_string(),
+                message: "no servers connected and no local Vulkan available".to_string(),
             },
         };
     }
 
-    // Send CreateInstance to all servers, collect handles
     let mut first_handle = None;
+
+    // Create instance on local executor first (if available)
+    if let (Some(executor), Some(session)) = (local_vulkan_executor, local_session) {
+        let response = executor.execute(session, command.clone());
+        if let VulkanResponse::InstanceCreated { handle } = &response {
+            if first_handle.is_none() {
+                first_handle = Some(*handle);
+            }
+            debug!("Instance created on local executor -> {:?}", handle);
+        }
+    }
+
+    // Send CreateInstance to all remote servers, collect handles
     for &idx in &server_indices {
         let msg = Message::VulkanCommand {
             request_id,
@@ -934,23 +1069,36 @@ async fn broadcast_vulkan_create_instance(
             request_id,
             response: VulkanResponse::Error {
                 code: -3,
-                message: "failed to create instance on any server".to_string(),
+                message: "failed to create instance on any server or locally".to_string(),
             },
         },
     }
 }
 
-/// Enumerate physical devices from all servers, merge into single response.
+/// Enumerate physical devices from all servers and local executor, merge into single response.
 async fn broadcast_vulkan_enumerate_physical_devices(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     instance: NetworkHandle,
 ) -> Message {
     let server_indices = pool_manager.all_connected_server_indices().await;
     let mut all_handles = Vec::new();
 
+    // Enumerate from local executor first
+    if let (Some(executor), Some(session)) = (local_vulkan_executor, local_session) {
+        let cmd = VulkanCommand::EnumeratePhysicalDevices { instance };
+        let response = executor.execute(session, cmd);
+        if let VulkanResponse::PhysicalDevices { handles } = response {
+            debug!("Local executor reported {} physical device(s)", handles.len());
+            all_handles.extend(handles);
+        }
+    }
+
+    // Enumerate from all remote servers
     for &idx in &server_indices {
         let msg = Message::VulkanCommand {
             request_id,
@@ -1073,14 +1221,21 @@ async fn reconnection_loop(
     endpoints: Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: Arc<GpuPoolManager>,
 ) {
-    let mut backoff_secs = vec![1u64; 0]; // Will be initialized on first check
+    let mut backoff_secs: Vec<u64> = Vec::new();
 
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
-        let conns = server_conns.read().await;
-        let eps = endpoints.read().await;
-        let server_count = conns.len();
+        // Snapshot the connection slots and endpoints to avoid holding locks during reconnect
+        let (conn_slots, endpoint_list): (Vec<_>, Vec<_>) = {
+            let conns = server_conns.read().await;
+            let eps = endpoints.read().await;
+            let slots: Vec<_> = conns.iter().cloned().collect();
+            let ep_list: Vec<_> = eps.iter().cloned().collect();
+            (slots, ep_list)
+        };
+
+        let server_count = conn_slots.len();
 
         // Initialize backoff array if needed
         if backoff_secs.len() < server_count {
@@ -1088,8 +1243,8 @@ async fn reconnection_loop(
         }
 
         for i in 0..server_count {
-            let conn_slot = conns[i].clone();
-            let endpoint = eps[i].clone();
+            let conn_slot = &conn_slots[i];
+            let endpoint = &endpoint_list[i];
 
             // Check if connection is alive
             let needs_reconnect = {
@@ -1127,17 +1282,11 @@ async fn reconnection_loop(
                 continue;
             }
 
-            drop(conns);
-            drop(eps);
-
+            // Needs reconnect
             debug!("attempting reconnection to server {} (backoff={}s)", i, backoff_secs[i]);
 
-            match reconnect(&endpoint).await {
+            match reconnect(endpoint).await {
                 Ok((new_conn, sid)) => {
-                    let conn_slot = {
-                        let conns = server_conns.read().await;
-                        conns[i].clone()
-                    };
                     let mut guard = conn_slot.lock().await;
                     *guard = Some(new_conn);
 
@@ -1159,9 +1308,6 @@ async fn reconnection_loop(
                     backoff_secs[i] = (backoff_secs[i] * 2).min(60);
                 }
             }
-
-            // Re-acquire locks for next iteration
-            break; // Break inner loop, outer loop will re-enter
         }
     }
 }

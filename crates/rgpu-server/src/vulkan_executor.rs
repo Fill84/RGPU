@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ash::vk;
 use dashmap::DashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 
 use rgpu_protocol::handle::{NetworkHandle, ResourceType};
 use rgpu_protocol::vulkan_commands::*;
@@ -13,8 +13,8 @@ use crate::session::Session;
 /// Server-side Vulkan command executor.
 /// Executes Vulkan commands on real GPU hardware via `ash`.
 pub struct VulkanExecutor {
-    /// The ash Entry (loaded once)
-    entry: Arc<ash::Entry>,
+    /// The ash Entry (loaded once). None if Vulkan is not available on this system.
+    entry: Option<Arc<ash::Entry>>,
 
     // ── Handle Maps ─────────────────────────────────────────
     instance_handles: DashMap<NetworkHandle, vk::Instance>,
@@ -74,11 +74,11 @@ impl VulkanExecutor {
         let entry = match unsafe { ash::Entry::load() } {
             Ok(e) => {
                 info!("Vulkan entry loaded successfully");
-                Arc::new(e)
+                Some(Arc::new(e))
             }
             Err(e) => {
-                error!("Failed to load Vulkan entry: {}", e);
-                panic!("Vulkan is required for VulkanExecutor");
+                warn!("Vulkan not available: {}. Vulkan commands will return errors.", e);
+                None
             }
         };
 
@@ -133,8 +133,24 @@ impl VulkanExecutor {
         }
     }
 
+
+    /// Check if Vulkan is available on this system.
+    pub fn is_available(&self) -> bool {
+        self.entry.is_some()
+    }
+
     /// Execute a Vulkan command and return the response.
     pub fn execute(&self, session: &Session, cmd: VulkanCommand) -> VulkanResponse {
+        let entry = match &self.entry {
+            Some(e) => e,
+            None => {
+                return VulkanResponse::Error {
+                    code: -1,
+                    message: "Vulkan is not available on this system".to_string(),
+                };
+            }
+        };
+
         match cmd {
             // ── Instance ────────────────────────────────────────
             VulkanCommand::CreateInstance {
@@ -171,7 +187,7 @@ impl VulkanExecutor {
 
                 let create_info = vk::InstanceCreateInfo::default().application_info(&app_info);
 
-                match unsafe { self.entry.create_instance(&create_info, None) } {
+                match unsafe { entry.create_instance(&create_info, None) } {
                     Ok(instance) => {
                         let handle = session.alloc_handle(ResourceType::VkInstance);
                         let raw = instance.handle();

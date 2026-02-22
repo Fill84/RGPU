@@ -9,6 +9,9 @@ description = "Remote GPU sharing over the network — CLI and daemon"
 name = "rgpu"
 path = "src/main.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
 [dependencies]
 rgpu-server = { workspace = true }
 rgpu-client = { workspace = true }
@@ -43,6 +46,11 @@ assets = [
     ["../../packaging/linux/deb/rgpu-ld.conf", "etc/ld.so.conf.d/rgpu.conf", "644"],
     ["../../packaging/linux/rgpu-server.service", "lib/systemd/system/rgpu-server.service", "644"],
     ["../../packaging/linux/rgpu-client.service", "lib/systemd/system/rgpu-client.service", "644"],
+    ["../../packaging/linux/rgpu.desktop", "usr/share/applications/rgpu.desktop", "644"],
+    ["../../icon.png", "usr/share/icons/hicolor/512x512/apps/rgpu.png", "644"],
+    ["../../128x128.png", "usr/share/icons/hicolor/128x128/apps/rgpu.png", "644"],
+    ["../../32x32.png", "usr/share/icons/hicolor/32x32/apps/rgpu.png", "644"],
+    ["../../icon.svg", "usr/share/icons/hicolor/scalable/apps/rgpu.svg", "644"],
 ]
 conf-files = ["/etc/rgpu/rgpu.toml"]
 maintainer-scripts = "../../packaging/linux/deb/"
@@ -58,6 +66,11 @@ assets = [
     { source = "../../packaging/linux/deb/rgpu-ld.conf", dest = "/etc/ld.so.conf.d/rgpu.conf", mode = "0644" },
     { source = "../../packaging/linux/rgpu-server.service", dest = "/lib/systemd/system/rgpu-server.service", mode = "0644" },
     { source = "../../packaging/linux/rgpu-client.service", dest = "/lib/systemd/system/rgpu-client.service", mode = "0644" },
+    { source = "../../packaging/linux/rgpu.desktop", dest = "/usr/share/applications/rgpu.desktop", mode = "0644" },
+    { source = "../../icon.png", dest = "/usr/share/icons/hicolor/512x512/apps/rgpu.png", mode = "0644" },
+    { source = "../../128x128.png", dest = "/usr/share/icons/hicolor/128x128/apps/rgpu.png", mode = "0644" },
+    { source = "../../32x32.png", dest = "/usr/share/icons/hicolor/32x32/apps/rgpu.png", mode = "0644" },
+    { source = "../../icon.svg", dest = "/usr/share/icons/hicolor/scalable/apps/rgpu.svg", mode = "0644" },
 ]
 post_install_script = "../../packaging/linux/rpm/post_install.sh"
 pre_uninstall_script = "../../packaging/linux/rpm/pre_uninstall.sh"

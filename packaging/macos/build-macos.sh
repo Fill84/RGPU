@@ -61,7 +61,7 @@ if [ "$MISSING" = true ]; then
 fi
 
 # Step 3: Create staging directory
-echo "[3/5] Staging files..."
+echo "[3/6] Staging files..."
 rm -rf "$STAGING"
 mkdir -p "$STAGING/usr/local/bin"
 mkdir -p "$STAGING/usr/local/lib/rgpu"
@@ -83,8 +83,78 @@ chmod 644 "$STAGING/usr/local/share/vulkan/icd.d/rgpu_icd.json"
 
 echo "  Staged to: $STAGING"
 
+# Step 3b: Create .app bundle with icon
+echo "[3b/6] Creating RGPU.app bundle..."
+APP_BUNDLE="$STAGING/Applications/RGPU.app"
+mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/Resources"
+
+# Generate .icns from PNG using iconutil (macOS only)
+ICONSET_DIR="$STAGING/rgpu.iconset"
+mkdir -p "$ICONSET_DIR"
+if command -v sips >/dev/null 2>&1; then
+    sips -z 16 16     "$PROJECT_ROOT/icon.png" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null 2>&1 || true
+    sips -z 32 32     "$PROJECT_ROOT/32x32.png" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null 2>&1 || true
+    sips -z 32 32     "$PROJECT_ROOT/32x32.png" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null 2>&1 || true
+    sips -z 64 64     "$PROJECT_ROOT/icon.png" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null 2>&1 || true
+    sips -z 128 128   "$PROJECT_ROOT/128x128.png" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null 2>&1 || true
+    sips -z 256 256   "$PROJECT_ROOT/128x128@2.png" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null 2>&1 || true
+    sips -z 256 256   "$PROJECT_ROOT/128x128@2.png" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null 2>&1 || true
+    sips -z 512 512   "$PROJECT_ROOT/512x512.png" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null 2>&1 || true
+    sips -z 512 512   "$PROJECT_ROOT/512x512.png" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null 2>&1 || true
+
+    if command -v iconutil >/dev/null 2>&1; then
+        iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/rgpu.icns"
+        echo "  Generated rgpu.icns"
+    else
+        echo "  WARN: iconutil not found, .app will not have icon"
+    fi
+else
+    echo "  WARN: sips not found (not macOS?), .app will not have icon"
+fi
+rm -rf "$ICONSET_DIR"
+
+# Create a launcher script that calls the real binary
+cat > "$APP_BUNDLE/Contents/MacOS/RGPU" << 'LAUNCHER'
+#!/bin/bash
+exec /usr/local/bin/rgpu "$@"
+LAUNCHER
+chmod 755 "$APP_BUNDLE/Contents/MacOS/RGPU"
+
+# Create Info.plist
+cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>RGPU</string>
+    <key>CFBundleDisplayName</key>
+    <string>RGPU - Remote GPU Manager</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.rgpu.app</string>
+    <key>CFBundleVersion</key>
+    <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleExecutable</key>
+    <string>RGPU</string>
+    <key>CFBundleIconFile</key>
+    <string>rgpu</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+echo "  Created RGPU.app bundle"
+
 # Step 4: Build component package
-echo "[4/5] Building component package..."
+echo "[4/6] Building component package..."
 chmod +x "$PKG_DIR/scripts/postinstall"
 
 pkgbuild \
@@ -98,7 +168,7 @@ pkgbuild \
 echo "  Component package: $OUTPUT_DIR/rgpu-component.pkg"
 
 # Step 5: Build product package (final installer with UI)
-echo "[5/5] Building product package..."
+echo "[5/6] Building product package..."
 
 # Update version in distribution.xml
 sed "s/version=\"0.1.0\"/version=\"${VERSION}\"/g" "$PKG_DIR/distribution.xml" > "$OUTPUT_DIR/distribution.xml"

@@ -219,6 +219,10 @@ pub struct UiState {
     // --- Connection form state ---
     pub new_connection_address: String,
     pub new_connection_token: String,
+
+    // --- Embedded server monitoring (direct, no TCP) ---
+    pub embedded_server_gpus: Vec<GpuInfo>,
+    pub embedded_server_metrics: Option<MetricsSnapshot>,
 }
 
 impl UiState {
@@ -252,6 +256,8 @@ impl UiState {
             pending_connections: Vec::new(),
             new_connection_address: String::new(),
             new_connection_token: String::new(),
+            embedded_server_gpus: Vec::new(),
+            embedded_server_metrics: None,
         }
     }
 
@@ -263,7 +269,8 @@ impl UiState {
     }
 
     pub fn total_gpus(&self) -> usize {
-        self.servers.iter().map(|s| s.gpus.len()).sum()
+        let remote: usize = self.servers.iter().map(|s| s.gpus.len()).sum();
+        remote + self.embedded_server_gpus.len()
     }
 
     pub fn connected_servers(&self) -> usize {

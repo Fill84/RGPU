@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=RGPU
+Comment=Remote GPU Sharing - Manage and use GPUs over the network
+Exec=rgpu
+Icon=rgpu
+Terminal=false
+Type=Application
+Categories=System;HardwareSettings;
+Keywords=GPU;CUDA;Vulkan;Remote;
+StartupNotify=true

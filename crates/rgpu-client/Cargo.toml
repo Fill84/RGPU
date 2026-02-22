@@ -8,6 +8,7 @@ rgpu-protocol = { workspace = true }
 rgpu-transport = { workspace = true }
 rgpu-core = { workspace = true }
 rgpu-common = { workspace = true }
+rgpu-server = { workspace = true }
 tokio = { workspace = true }
 dashmap = { workspace = true }
 tracing = { workspace = true }

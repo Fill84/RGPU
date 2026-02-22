@@ -73,6 +73,7 @@ Copy-Item "$ProjectRoot\target\release\rgpu.exe" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_cuda_interpose.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_vk_icd.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\packaging\config\rgpu.toml.template" "$StagingDir\"
+Copy-Item "$ProjectRoot\icon.ico" "$StagingDir\"
 
 Write-Host "  Staged to: $StagingDir" -ForegroundColor Green
 
