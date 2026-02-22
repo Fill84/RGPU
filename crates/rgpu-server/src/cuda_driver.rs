@@ -514,7 +514,7 @@ impl CudaDriver {
 
     fn load_library() -> Result<Library, String> {
         #[cfg(target_os = "windows")]
-        let lib_names = &["nvcuda.dll"];
+        let lib_names = &["nvcuda_real.dll", "nvcuda.dll"];
 
         #[cfg(target_os = "linux")]
         let lib_names = &["libcuda.so.1", "libcuda.so"];

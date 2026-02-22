@@ -158,6 +158,30 @@ impl RgpuConfig {
     }
 }
 
+/// Returns the default config file path based on platform conventions.
+/// Search order:
+/// 1. System-wide config: `%PROGRAMDATA%\RGPU\rgpu.toml` (Windows) or `/etc/rgpu/rgpu.toml` (Linux/macOS)
+/// 2. Local fallback: `./rgpu.toml`
+pub fn default_config_path() -> String {
+    #[cfg(windows)]
+    {
+        let programdata = std::env::var("PROGRAMDATA")
+            .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+        let system_path = format!(r"{}\RGPU\rgpu.toml", programdata);
+        if std::path::Path::new(&system_path).exists() {
+            return system_path;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let system_path = "/etc/rgpu/rgpu.toml";
+        if std::path::Path::new(system_path).exists() {
+            return system_path.to_string();
+        }
+    }
+    "rgpu.toml".to_string()
+}
+
 fn default_port() -> u16 {
     9876
 }

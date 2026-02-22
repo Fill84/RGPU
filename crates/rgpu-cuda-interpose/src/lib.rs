@@ -76,6 +76,14 @@ fn null_stream_handle() -> NetworkHandle {
     }
 }
 
+// ── Marker function for RGPU interpose DLL detection ────────────────
+// Used by the installer/daemon to verify that nvcuda.dll in System32
+// is the RGPU interpose library and not the real NVIDIA driver.
+#[no_mangle]
+pub extern "C" fn rgpu_interpose_marker() -> c_int {
+    1
+}
+
 // ── Exported CUDA Driver API Functions ──────────────────────────────
 
 // ── Initialization ──────────────────────────────────────────────────

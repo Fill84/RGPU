@@ -85,6 +85,26 @@ Function un.onInit
 FunctionEnd
 
 ;---------------------------------
+; Component conflict warning
+;---------------------------------
+Function .onSelChange
+  ; Warn if both Server Service and CUDA Interpose are selected
+  SectionGetFlags ${SEC_SERVICE} $0
+  SectionGetFlags ${SEC_CUDA} $1
+  IntOp $0 $0 & 1
+  IntOp $1 $1 & 1
+  IntCmp $0 0 no_conflict
+  IntCmp $1 0 no_conflict
+    MessageBox MB_YESNO|MB_ICONWARNING \
+      "WARNING: You have selected both 'CUDA System-Wide Interpose' and 'Server Service'.$\r$\n$\r$\nInstalling the CUDA interpose on a server machine will replace nvcuda.dll in System32, which breaks the server's direct GPU access.$\r$\n$\r$\nOnly install CUDA interpose on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
+    ; Deselect CUDA if user says No
+    SectionGetFlags ${SEC_CUDA} $0
+    IntOp $0 $0 & 0xFFFFFFFE
+    SectionSetFlags ${SEC_CUDA} $0
+  no_conflict:
+FunctionEnd
+
+;---------------------------------
 ; Section: Core (required)
 ;---------------------------------
 Section "RGPU Core (required)" SEC_CORE
@@ -154,11 +174,28 @@ Section "RGPU Core (required)" SEC_CORE
 SectionEnd
 
 ;---------------------------------
-; Section: CUDA Interpose Library
+; Section: CUDA System-Wide Interpose
 ;---------------------------------
-Section "CUDA Interpose Library" SEC_CUDA
+Section "CUDA System-Wide Interpose (client only)" SEC_CUDA
+  ; Install a copy to INSTDIR\lib for reference
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_cuda_interpose.dll"
+
+  ; --- System-wide CUDA interception via System32 ---
+  ; Back up the real NVIDIA nvcuda.dll if it exists
+  IfFileExists "$SYSDIR\nvcuda.dll" 0 no_backup_needed
+    ; Only backup if we haven't already (previous install)
+    IfFileExists "$SYSDIR\nvcuda_real.dll" skip_backup
+      DetailPrint "Backing up original nvcuda.dll to nvcuda_real.dll..."
+      CopyFiles /SILENT "$SYSDIR\nvcuda.dll" "$SYSDIR\nvcuda_real.dll"
+      WriteRegStr HKLM "Software\RGPU" "NvCudaBackedUp" "1"
+    skip_backup:
+  no_backup_needed:
+
+  ; Copy our interpose DLL as nvcuda.dll into System32
+  DetailPrint "Installing RGPU CUDA interpose as $SYSDIR\nvcuda.dll..."
+  CopyFiles /SILENT "$INSTDIR\lib\rgpu_cuda_interpose.dll" "$SYSDIR\nvcuda.dll"
+  WriteRegStr HKLM "Software\RGPU" "CudaInterposed" "1"
 SectionEnd
 
 ;---------------------------------
@@ -188,13 +225,26 @@ Section "Vulkan ICD Driver" SEC_VULKAN
 SectionEnd
 
 ;---------------------------------
-; Section: Windows Service
+; Section: Server Windows Service
 ;---------------------------------
-Section /o "Windows Service (manual start)" SEC_SERVICE
+Section /o "Server Service (manual start)" SEC_SERVICE
   ; Create Windows Service using sc.exe
   ; Service starts manually (demand) -- user enables it explicitly
   nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
   nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
+SectionEnd
+
+;---------------------------------
+; Section: Client Daemon Service
+;---------------------------------
+Section /o "Client Daemon Service (auto-start)" SEC_CLIENT_SERVICE
+  ; Create Windows Service for the client daemon with auto-start
+  ; Reads config from the system-wide ProgramData location
+  nsExec::ExecToLog 'sc create "RGPU Client" binPath= "\"$INSTDIR\bin\rgpu.exe\" client --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= auto DisplayName= "RGPU Client Daemon"'
+  nsExec::ExecToLog 'sc description "RGPU Client" "RGPU Client Daemon - connects to remote GPU servers and exposes them locally via IPC"'
+
+  ; Start the service immediately
+  nsExec::ExecToLog 'sc start "RGPU Client"'
 SectionEnd
 
 ;---------------------------------
@@ -204,20 +254,40 @@ SectionEnd
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CORE} \
     "The RGPU command-line tool and GUI. Required."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CUDA} \
-    "CUDA interpose library for intercepting CUDA API calls and forwarding them to remote GPUs."
+    "System-wide CUDA interception. Replaces nvcuda.dll in System32 so ALL applications use remote GPUs. WARNING: Do NOT install on machines running the RGPU server."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VULKAN} \
     "Vulkan Installable Client Driver (ICD) for presenting remote GPUs as local Vulkan devices."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SERVICE} \
-    "Install RGPU as a Windows Service (manual start). Use 'sc start RGPU Server' to run."
+    "Install RGPU Server as a Windows Service (manual start). For machines with GPUs to share."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CLIENT_SERVICE} \
+    "Install RGPU Client Daemon as an auto-start Windows Service. Connects to remote servers on boot. Reads config from $ProgramDataDir\RGPU\rgpu.toml."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ;---------------------------------
 ; Uninstaller
 ;---------------------------------
 Section "Uninstall"
-  ; Stop and remove Windows Service (if installed)
+  ; Stop and remove Windows Services (if installed)
+  nsExec::ExecToLog 'sc stop "RGPU Client"'
+  nsExec::ExecToLog 'sc delete "RGPU Client"'
   nsExec::ExecToLog 'sc stop "RGPU Server"'
   nsExec::ExecToLog 'sc delete "RGPU Server"'
+
+  ; Restore original nvcuda.dll from backup (if we replaced it)
+  ReadRegStr $0 HKLM "Software\RGPU" "CudaInterposed"
+  StrCmp $0 "1" 0 skip_cuda_restore
+    ; Check if backup exists
+    IfFileExists "$SYSDIR\nvcuda_real.dll" 0 remove_our_nvcuda
+      ; Restore the original NVIDIA driver
+      DetailPrint "Restoring original nvcuda.dll from backup..."
+      Delete "$SYSDIR\nvcuda.dll"
+      CopyFiles /SILENT "$SYSDIR\nvcuda_real.dll" "$SYSDIR\nvcuda.dll"
+      Delete "$SYSDIR\nvcuda_real.dll"
+      Goto skip_cuda_restore
+    remove_our_nvcuda:
+      ; No backup existed (no NVIDIA driver was installed), just remove our DLL
+      Delete "$SYSDIR\nvcuda.dll"
+  skip_cuda_restore:
 
   ; Remove Vulkan ICD registry entry
   DeleteRegValue HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$INSTDIR\lib\rgpu_icd.json"

@@ -187,7 +187,7 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
 
             let mut st = state.lock().unwrap();
             st.embedded_server_gpus = gpu_infos;
-            st.embedded_server_metrics = Some(snapshot);
+            st.push_embedded_metrics(snapshot);
         }
 
         // --- Poll all remote servers ---
@@ -329,6 +329,8 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
         let mut st = state.lock().unwrap();
         st.embedded_server_gpus.clear();
         st.embedded_server_metrics = None;
+        st.embedded_server_metrics_history.clear();
+        st.embedded_server_rates = crate::state::MetricsRates::default();
     }
 }
 
@@ -433,6 +435,8 @@ async fn handle_server_lifecycle(
             let mut st = state.lock().unwrap();
             st.embedded_server_gpus.clear();
             st.embedded_server_metrics = None;
+            st.embedded_server_metrics_history.clear();
+            st.embedded_server_rates = crate::state::MetricsRates::default();
             st.local_server_status = LocalServerStatus::Stopped;
         }
         ctx.request_repaint();

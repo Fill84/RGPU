@@ -223,6 +223,8 @@ pub struct UiState {
     // --- Embedded server monitoring (direct, no TCP) ---
     pub embedded_server_gpus: Vec<GpuInfo>,
     pub embedded_server_metrics: Option<MetricsSnapshot>,
+    pub embedded_server_metrics_history: VecDeque<MetricsSnapshot>,
+    pub embedded_server_rates: MetricsRates,
 }
 
 impl UiState {
@@ -258,7 +260,38 @@ impl UiState {
             new_connection_token: String::new(),
             embedded_server_gpus: Vec::new(),
             embedded_server_metrics: None,
+            embedded_server_metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
+            embedded_server_rates: MetricsRates::default(),
         }
+    }
+
+    /// Push a metrics snapshot for the embedded server, computing rates from previous.
+    pub fn push_embedded_metrics(&mut self, snapshot: MetricsSnapshot) {
+        if let Some(prev) = self.embedded_server_metrics_history.back() {
+            let dt = snapshot.timestamp.duration_since(prev.timestamp).as_secs_f64();
+            if dt > 0.0 {
+                self.embedded_server_rates = MetricsRates {
+                    requests_per_sec: (snapshot.requests_total.saturating_sub(prev.requests_total))
+                        as f64
+                        / dt,
+                    cuda_per_sec: (snapshot.cuda_commands.saturating_sub(prev.cuda_commands))
+                        as f64
+                        / dt,
+                    vulkan_per_sec: (snapshot.vulkan_commands.saturating_sub(prev.vulkan_commands))
+                        as f64
+                        / dt,
+                    errors_per_sec: (snapshot.errors_total.saturating_sub(prev.errors_total))
+                        as f64
+                        / dt,
+                };
+            }
+        }
+
+        if self.embedded_server_metrics_history.len() >= MAX_METRICS_HISTORY {
+            self.embedded_server_metrics_history.pop_front();
+        }
+        self.embedded_server_metrics = Some(snapshot.clone());
+        self.embedded_server_metrics_history.push_back(snapshot);
     }
 
     pub fn push_error(&mut self, msg: String) {

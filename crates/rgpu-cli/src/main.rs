@@ -46,9 +46,9 @@ enum Commands {
         #[arg(long)]
         key: Option<String>,
 
-        /// Configuration file path
-        #[arg(short, long, default_value = "rgpu.toml")]
-        config: String,
+        /// Configuration file path (auto-discovers from system location if not specified)
+        #[arg(short, long)]
+        config: Option<String>,
 
         /// Write PID to this file (for service managers)
         #[arg(long)]
@@ -65,9 +65,9 @@ enum Commands {
         #[arg(short, long, default_value = "")]
         token: String,
 
-        /// Configuration file path
-        #[arg(short, long, default_value = "rgpu.toml")]
-        config: String,
+        /// Configuration file path (auto-discovers from system location if not specified)
+        #[arg(short, long)]
+        config: Option<String>,
 
         /// Write PID to this file (for service managers)
         #[arg(long)]
@@ -102,9 +102,9 @@ enum Commands {
         #[arg(short, long, default_value = "")]
         token: String,
 
-        /// Configuration file path
-        #[arg(short, long, default_value = "rgpu.toml")]
-        config: String,
+        /// Configuration file path (auto-discovers from system location if not specified)
+        #[arg(short, long)]
+        config: Option<String>,
 
         /// Metrics poll interval in seconds
         #[arg(long, default_value_t = 2)]
@@ -136,7 +136,8 @@ async fn main() -> anyhow::Result<()> {
                 std::fs::write(path, std::process::id().to_string())?;
             }
 
-            info!("starting RGPU server on {}:{}", bind, port);
+            let config = config.unwrap_or_else(rgpu_core::config::default_config_path);
+            info!("starting RGPU server on {}:{} (config: {})", bind, port, config);
 
             let mut server_config = rgpu_core::config::ServerConfig::default();
             server_config.port = port;
@@ -171,7 +172,8 @@ async fn main() -> anyhow::Result<()> {
                 std::fs::write(path, std::process::id().to_string())?;
             }
 
-            info!("starting RGPU client daemon");
+            let config = config.unwrap_or_else(rgpu_core::config::default_config_path);
+            info!("starting RGPU client daemon (config: {})", config);
 
             let mut client_config = rgpu_core::config::ClientConfig::default();
 
@@ -233,7 +235,8 @@ async fn main() -> anyhow::Result<()> {
             config,
             poll_interval,
         }) => {
-            info!("launching RGPU UI");
+            let config = config.unwrap_or_else(rgpu_core::config::default_config_path);
+            info!("launching RGPU UI (config: {})", config);
 
             // Collect servers from CLI args
             let mut all_servers: Vec<(String, String)> = server
@@ -332,15 +335,16 @@ async fn main() -> anyhow::Result<()> {
 
         None => {
             // Default: launch UI when no subcommand is given (e.g. double-click on Windows/macOS)
-            info!("launching RGPU UI (default)");
-            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default("rgpu.toml");
+            let config = rgpu_core::config::default_config_path();
+            info!("launching RGPU UI (default, config: {})", config);
+            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);
             let servers: Vec<(String, String)> = rgpu_config
                 .client
                 .servers
                 .iter()
                 .map(|s| (s.address.clone(), s.token.clone()))
                 .collect();
-            rgpu_ui::launch_ui(servers, "rgpu.toml".to_string(), 2)?;
+            rgpu_ui::launch_ui(servers, config, 2)?;
         }
     }
 
