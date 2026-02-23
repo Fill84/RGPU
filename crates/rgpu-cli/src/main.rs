@@ -6,6 +6,9 @@ use tracing::info;
 
 mod verify;
 
+#[cfg(windows)]
+mod service;
+
 /// Re-attach to the parent console on Windows so CLI subcommands can print output.
 /// This is needed because `#![windows_subsystem = "windows"]` detaches stdout/stderr.
 #[cfg(windows)]
@@ -55,6 +58,10 @@ enum Commands {
         /// Write PID to this file (for service managers)
         #[arg(long)]
         pid_file: Option<String>,
+
+        /// Run as a Windows service (used by the service control manager)
+        #[arg(long, hide = true)]
+        service: bool,
     },
 
     /// Start the RGPU client daemon (connects to servers and exposes remote GPUs locally)
@@ -74,6 +81,10 @@ enum Commands {
         /// Write PID to this file (for service managers)
         #[arg(long)]
         pid_file: Option<String>,
+
+        /// Run as a Windows service (used by the service control manager)
+        #[arg(long, hide = true)]
+        service: bool,
     },
 
     /// Generate an authentication token
@@ -144,7 +155,16 @@ async fn main() -> anyhow::Result<()> {
             key,
             config,
             pid_file,
+            service,
         }) => {
+            #[cfg(windows)]
+            if service {
+                service::run_as_server_service()?;
+                return Ok(());
+            }
+            #[cfg(not(windows))]
+            let _ = service;
+
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -180,7 +200,16 @@ async fn main() -> anyhow::Result<()> {
             token,
             config,
             pid_file,
+            service,
         }) => {
+            #[cfg(windows)]
+            if service {
+                service::run_as_client_service()?;
+                return Ok(());
+            }
+            #[cfg(not(windows))]
+            let _ = service;
+
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }

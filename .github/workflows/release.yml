@@ -107,24 +107,33 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Install packaging tools
         run: |
           cargo install cargo-deb --locked
           cargo install cargo-generate-rpm --locked
 
       - name: Build .deb package
-        run: cargo deb -p rgpu-cli --no-build
+        run: cargo deb -p rgpu-cli --no-build --deb-version ${{ steps.version.outputs.VERSION }}
 
       - name: Build .rpm package
-        run: cargo generate-rpm -p crates/rgpu-cli
+        run: cargo generate-rpm -p crates/rgpu-cli --set-metadata "version=${{ steps.version.outputs.VERSION }}"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
           name: rgpu-linux-x64
           path: |
-            target/debian/rgpu_*.deb
-            target/generate-rpm/rgpu-*.rpm
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
 
   # ─── macOS Package (.pkg) ──────────────────────
   build-macos:
@@ -156,6 +165,9 @@ jobs:
           else
             echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Clean old .pkg files from cache
+        run: rm -f target/rgpu-*-macos-x64.pkg
 
       - name: Build .pkg installer
         run: |

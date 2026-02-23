@@ -20,4 +20,4 @@ serde = { workspace = true }
 # Unix domain sockets are built into tokio
 
 [target.'cfg(windows)'.dependencies]
-# Named pipes are built into tokio
+windows-sys = { version = "0.59", features = ["Win32_Security", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Foundation"] }

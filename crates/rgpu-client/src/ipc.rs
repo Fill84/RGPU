@@ -91,20 +91,89 @@ pub async fn start_ipc_listener(
 }
 
 #[cfg(windows)]
+/// Create a named pipe instance with a null DACL security descriptor.
+/// This allows ALL users (including non-admin) to connect, which is required
+/// when the daemon runs as SYSTEM via a Windows service.
+fn create_pipe_with_open_access(
+    pipe_name: &str,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeServer, Box<dyn std::error::Error + Send + Sync>>
+{
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Security::{
+        InitializeSecurityDescriptor, SetSecurityDescriptorDacl, SECURITY_ATTRIBUTES,
+    };
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED;
+    use windows_sys::Win32::System::Pipes::{
+        CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+
+    // Constants not always exported by windows-sys
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+    const PIPE_ACCESS_DUPLEX: u32 = 0x00000003;
+
+    // Build a wide string for the pipe name
+    let wide_name: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
+
+    // Allocate a security descriptor buffer (opaque struct, PSECURITY_DESCRIPTOR = *mut c_void)
+    // SECURITY_DESCRIPTOR is 40 bytes on x64, use a generous buffer
+    let mut sd_buffer = [0u8; 64];
+    let sd_ptr = sd_buffer.as_mut_ptr() as *mut std::ffi::c_void;
+
+    // Initialize with a null DACL (all access allowed — appropriate for local IPC)
+    let ok = unsafe { InitializeSecurityDescriptor(sd_ptr, SECURITY_DESCRIPTOR_REVISION) };
+    if ok == 0 {
+        return Err("InitializeSecurityDescriptor failed".into());
+    }
+    let ok = unsafe { SetSecurityDescriptorDacl(sd_ptr, 1, std::ptr::null_mut(), 0) };
+    if ok == 0 {
+        return Err("SetSecurityDescriptorDacl failed".into());
+    }
+
+    let mut sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd_ptr,
+        bInheritHandle: 0,
+    };
+
+    let handle = unsafe {
+        CreateNamedPipeW(
+            wide_name.as_ptr(),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            65536, // out buffer size
+            65536, // in buffer size
+            0,     // default timeout
+            &mut sa,
+        )
+    };
+
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "CreateNamedPipeW failed: {}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+
+    // Safety: handle is a valid named pipe handle from CreateNamedPipeW
+    let server = unsafe {
+        tokio::net::windows::named_pipe::NamedPipeServer::from_raw_handle(handle as _)?
+    };
+    Ok(server)
+}
+
+#[cfg(windows)]
 pub async fn start_ipc_listener(
     pipe_name: &str,
     message_handler: impl Fn(Message) -> Option<Message> + Send + Sync + 'static,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use tokio::net::windows::named_pipe::{ServerOptions, PipeMode};
-
     info!("IPC listening on {}", pipe_name);
 
     let handler = std::sync::Arc::new(message_handler);
 
     loop {
-        let server = ServerOptions::new()
-            .pipe_mode(PipeMode::Byte)
-            .create(pipe_name)?;
+        let server = create_pipe_with_open_access(pipe_name)?;
 
         server.connect().await?;
         let handler = handler.clone();

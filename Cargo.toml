@@ -55,6 +55,8 @@ bytemuck = { version = "1", features = ["derive"] }
 # Error handling
 thiserror = "2"
 anyhow = "1"
+# Windows service
+windows-service = "0.7"
 # Internal crates
 rgpu-protocol = { path = "crates/rgpu-protocol" }
 rgpu-transport = { path = "crates/rgpu-transport" }

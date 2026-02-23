@@ -210,7 +210,7 @@ SectionEnd
 Section /o "Server Service (manual start)" SEC_SERVICE
   ; Create Windows Service using sc.exe
   ; Service starts manually (demand) -- user enables it explicitly
-  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
+  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --service --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
   nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
 SectionEnd
 
@@ -220,7 +220,7 @@ SectionEnd
 Section /o "Client Daemon Service (auto-start)" SEC_CLIENT_SERVICE
   ; Create Windows Service for the client daemon with auto-start
   ; Reads config from the system-wide ProgramData location
-  nsExec::ExecToLog 'sc create "RGPU Client" binPath= "\"$INSTDIR\bin\rgpu.exe\" client --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= auto DisplayName= "RGPU Client Daemon"'
+  nsExec::ExecToLog 'sc create "RGPU Client" binPath= "\"$INSTDIR\bin\rgpu.exe\" client --service --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= auto DisplayName= "RGPU Client Daemon"'
   nsExec::ExecToLog 'sc description "RGPU Client" "RGPU Client Daemon - connects to remote GPU servers and exposes them locally via IPC"'
 
   ; Start the service immediately
