@@ -125,7 +125,7 @@ jobs:
         run: cargo deb -p rgpu-cli --no-build --deb-version ${{ steps.version.outputs.VERSION }}
 
       - name: Build .rpm package
-        run: cargo generate-rpm -p crates/rgpu-cli --set-metadata "version=${{ steps.version.outputs.VERSION }}"
+        run: cargo generate-rpm -p crates/rgpu-cli --set-metadata 'version="${{ steps.version.outputs.VERSION }}"'
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
