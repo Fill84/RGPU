@@ -2713,6 +2713,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgpu-nvdec-interpose"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "parking_lot",
+ "rgpu-common",
+ "rgpu-core",
+ "rgpu-protocol",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rgpu-nvenc-interpose"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "parking_lot",
+ "rgpu-common",
+ "rgpu-core",
+ "rgpu-protocol",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rgpu-protocol"
 version = "0.1.0"
 dependencies = [

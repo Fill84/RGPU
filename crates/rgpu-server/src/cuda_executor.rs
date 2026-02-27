@@ -1345,6 +1345,104 @@ impl CudaExecutor {
                 }
             }
 
+            CudaCommand::Memcpy2DHtoD {
+                dst,
+                dst_x_in_bytes,
+                dst_y,
+                dst_pitch,
+                src_data,
+                width_in_bytes,
+                height,
+            } => {
+                let d = match self.driver() {
+                    Ok(d) => d,
+                    Err(e) => return e,
+                };
+                let real_dst = match self.memory_handles.get(&dst) {
+                    Some(p) => *p,
+                    None => return CudaResponse::Error { code: 400, message: "invalid dst handle".into() },
+                };
+                // Row-by-row copy from packed src_data to pitched device memory
+                let w = width_in_bytes as usize;
+                let h = height as usize;
+                for row in 0..h {
+                    let dst_offset = (dst_y as usize + row) * dst_pitch as usize + dst_x_in_bytes as usize;
+                    let src_offset = row * w;
+                    let res = d.memcpy_htod(real_dst + dst_offset as u64, &src_data[src_offset..src_offset + w]);
+                    if res != CUDA_SUCCESS {
+                        return Self::cuda_err(res);
+                    }
+                }
+                CudaResponse::Success
+            }
+
+            CudaCommand::Memcpy2DDtoH {
+                src,
+                src_x_in_bytes,
+                src_y,
+                src_pitch,
+                width_in_bytes,
+                height,
+            } => {
+                let d = match self.driver() {
+                    Ok(d) => d,
+                    Err(e) => return e,
+                };
+                let real_src = match self.memory_handles.get(&src) {
+                    Some(p) => *p,
+                    None => return CudaResponse::Error { code: 400, message: "invalid src handle".into() },
+                };
+                let w = width_in_bytes as usize;
+                let h = height as usize;
+                let mut packed = vec![0u8; w * h];
+                for row in 0..h {
+                    let src_offset = (src_y as usize + row) * src_pitch as usize + src_x_in_bytes as usize;
+                    let dst_offset = row * w;
+                    let res = d.memcpy_dtoh(&mut packed[dst_offset..dst_offset + w], real_src + src_offset as u64);
+                    if res != CUDA_SUCCESS {
+                        return Self::cuda_err(res);
+                    }
+                }
+                CudaResponse::MemoryData(packed)
+            }
+
+            CudaCommand::Memcpy2DDtoD {
+                dst,
+                dst_x_in_bytes,
+                dst_y,
+                dst_pitch,
+                src,
+                src_x_in_bytes,
+                src_y,
+                src_pitch,
+                width_in_bytes,
+                height,
+            } => {
+                let d = match self.driver() {
+                    Ok(d) => d,
+                    Err(e) => return e,
+                };
+                let real_dst = match self.memory_handles.get(&dst) {
+                    Some(p) => *p,
+                    None => return CudaResponse::Error { code: 400, message: "invalid dst handle".into() },
+                };
+                let real_src = match self.memory_handles.get(&src) {
+                    Some(p) => *p,
+                    None => return CudaResponse::Error { code: 400, message: "invalid src handle".into() },
+                };
+                let w = width_in_bytes as usize;
+                let h = height as usize;
+                for row in 0..h {
+                    let s = real_src + (src_y as usize + row) as u64 * src_pitch + src_x_in_bytes;
+                    let d_off = real_dst + (dst_y as usize + row) as u64 * dst_pitch + dst_x_in_bytes;
+                    let res = d.memcpy_dtod(d_off, s, w);
+                    if res != CUDA_SUCCESS {
+                        return Self::cuda_err(res);
+                    }
+                }
+                CudaResponse::Success
+            }
+
             CudaCommand::MemsetD8 {
                 dst,
                 value,
@@ -2760,6 +2858,18 @@ impl CudaExecutor {
             76 => 6,         // CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR
             _ => 0,
         }
+    }
+
+    /// Resolve a CUDA context NetworkHandle to a real CUcontext pointer.
+    /// Used by NvencExecutor to get the real CUDA context for encoding sessions.
+    pub fn get_context_ptr(&self, handle: &NetworkHandle) -> Option<*mut c_void> {
+        self.context_handles.get(handle).map(|ctx| *ctx as *mut c_void)
+    }
+
+    /// Resolve a CUDA device memory NetworkHandle to a real CUdeviceptr value.
+    /// Used by NvencExecutor to register CUDA device memory as encoder input.
+    pub fn get_device_ptr(&self, handle: &NetworkHandle) -> Option<u64> {
+        self.memory_handles.get(handle).map(|dptr| *dptr)
     }
 
     /// Clean up all GPU resources owned by a disconnecting session.

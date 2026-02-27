@@ -128,6 +128,8 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
         // ── Memory Management ───────────────────────────────────
         "cuMemAlloc" | "cuMemAlloc_v2" => Some(crate::cuMemAlloc_v2 as *mut c_void),
         "cuMemFree" | "cuMemFree_v2" => Some(crate::cuMemFree_v2 as *mut c_void),
+        "cuMemcpy" => Some(crate::cuMemcpy as *mut c_void),
+        "cuMemcpyAsync" | "cuMemcpyAsync_ptsz" => Some(crate::cuMemcpyAsync as *mut c_void),
         "cuMemcpyHtoD" | "cuMemcpyHtoD_v2" => Some(crate::cuMemcpyHtoD_v2 as *mut c_void),
         "cuMemcpyDtoH" | "cuMemcpyDtoH_v2" => Some(crate::cuMemcpyDtoH_v2 as *mut c_void),
         "cuMemcpyDtoD" | "cuMemcpyDtoD_v2" => Some(crate::cuMemcpyDtoD_v2 as *mut c_void),
@@ -140,9 +142,16 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
         "cuMemcpyDtoDAsync" | "cuMemcpyDtoDAsync_v2" => {
             Some(crate::cuMemcpyDtoDAsync_v2 as *mut c_void)
         }
+        "cuMemcpy2D" | "cuMemcpy2D_v2" => Some(crate::cuMemcpy2D_v2 as *mut c_void),
+        "cuMemcpy2DAsync" | "cuMemcpy2DAsync_v2" | "cuMemcpy2DAsync_v2_ptsz" => {
+            Some(crate::cuMemcpy2DAsync_v2 as *mut c_void)
+        }
         "cuMemsetD8" | "cuMemsetD8_v2" => Some(crate::cuMemsetD8_v2 as *mut c_void),
         "cuMemsetD16" | "cuMemsetD16_v2" => Some(crate::cuMemsetD16_v2 as *mut c_void),
         "cuMemsetD32" | "cuMemsetD32_v2" => Some(crate::cuMemsetD32_v2 as *mut c_void),
+        "cuMemsetD8Async" | "cuMemsetD8Async_ptsz" => Some(crate::cuMemsetD8Async as *mut c_void),
+        "cuMemsetD16Async" | "cuMemsetD16Async_ptsz" => Some(crate::cuMemsetD16Async as *mut c_void),
+        "cuMemsetD32Async" | "cuMemsetD32Async_ptsz" => Some(crate::cuMemsetD32Async as *mut c_void),
         "cuMemGetInfo" | "cuMemGetInfo_v2" => Some(crate::cuMemGetInfo_v2 as *mut c_void),
         "cuMemGetAddressRange" | "cuMemGetAddressRange_v2" => {
             Some(crate::cuMemGetAddressRange_v2 as *mut c_void)
@@ -327,9 +336,11 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
         "cuDestroyExternalSemaphore" => Some(stubs::cuDestroyExternalSemaphore as *mut c_void),
 
         // CUDA Array stubs
-        "cuArrayCreate" | "cuArrayCreate_v2" => Some(stubs::cuArrayCreate as *mut c_void),
+        "cuArrayCreate" => Some(stubs::cuArrayCreate as *mut c_void),
+        "cuArrayCreate_v2" => Some(stubs::cuArrayCreate_v2 as *mut c_void),
         "cuArrayDestroy" => Some(stubs::cuArrayDestroy as *mut c_void),
-        "cuArray3DCreate" | "cuArray3DCreate_v2" => Some(stubs::cuArray3DCreate as *mut c_void),
+        "cuArray3DCreate" => Some(stubs::cuArray3DCreate as *mut c_void),
+        "cuArray3DCreate_v2" => Some(stubs::cuArray3DCreate_v2 as *mut c_void),
         "cuArrayGetDescriptor" | "cuArrayGetDescriptor_v2" => {
             Some(stubs::cuArrayGetDescriptor as *mut c_void)
         }
@@ -368,6 +379,22 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
             Some(stubs::cuMemHostRegister as *mut c_void)
         }
         "cuMemHostUnregister" => Some(stubs::cuMemHostUnregister as *mut c_void),
+
+        // OpenGL interop stubs
+        "cuGLGetDevices" => Some(stubs::cuGLGetDevices as *mut c_void),
+        "cuGLGetDevices_v2" => Some(stubs::cuGLGetDevices_v2 as *mut c_void),
+        "cuGraphicsGLRegisterImage" => Some(stubs::cuGraphicsGLRegisterImage as *mut c_void),
+        "cuGraphicsUnregisterResource" => Some(stubs::cuGraphicsUnregisterResource as *mut c_void),
+        "cuGraphicsMapResources" => Some(stubs::cuGraphicsMapResources as *mut c_void),
+        "cuGraphicsUnmapResources" => Some(stubs::cuGraphicsUnmapResources as *mut c_void),
+        "cuGraphicsSubResourceGetMappedArray" => Some(stubs::cuGraphicsSubResourceGetMappedArray as *mut c_void),
+        "cuGraphicsResourceGetMappedPointer" => Some(stubs::cuGraphicsResourceGetMappedPointer as *mut c_void),
+        "cuGraphicsResourceGetMappedPointer_v2" => Some(stubs::cuGraphicsResourceGetMappedPointer_v2 as *mut c_void),
+
+        // D3D11 interop stubs (Windows)
+        "cuD3D11GetDevice" => Some(stubs::cuD3D11GetDevice as *mut c_void),
+        "cuD3D11GetDevices" => Some(stubs::cuD3D11GetDevices as *mut c_void),
+        "cuGraphicsD3D11RegisterResource" => Some(stubs::cuGraphicsD3D11RegisterResource as *mut c_void),
 
         // ── Not found ───────────────────────────────────────────
         _ => None,

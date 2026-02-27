@@ -1,6 +1,3 @@
-// Hide console window on Windows when launching the GUI (e.g. double-click)
-#![windows_subsystem = "windows"]
-
 use clap::{Parser, Subcommand};
 use tracing::info;
 
@@ -9,18 +6,17 @@ mod verify;
 #[cfg(windows)]
 mod service;
 
-/// Re-attach to the parent console on Windows so CLI subcommands can print output.
-/// This is needed because `#![windows_subsystem = "windows"]` detaches stdout/stderr.
+/// Detach from the console on Windows when launching the GUI.
+/// Called only in GUI mode (no subcommand) so the console window disappears.
 #[cfg(windows)]
-fn attach_parent_console() {
+fn detach_console() {
     unsafe {
-        // ATTACH_PARENT_PROCESS = -1 (0xFFFFFFFF)
-        windows_sys::Win32::System::Console::AttachConsole(0xFFFFFFFF);
+        windows_sys::Win32::System::Console::FreeConsole();
     }
 }
 
 #[cfg(not(windows))]
-fn attach_parent_console() {}
+fn detach_console() {}
 
 #[derive(Parser)]
 #[command(name = "rgpu")]
@@ -141,11 +137,6 @@ async fn main() -> anyhow::Result<()> {
     rgpu_common::init_logging();
 
     let cli = Cli::parse();
-
-    // For CLI subcommands, re-attach to the parent console so stdout/stderr work
-    if cli.command.is_some() {
-        attach_parent_console();
-    }
 
     match cli.command {
         Some(Commands::Server {
@@ -277,6 +268,7 @@ async fn main() -> anyhow::Result<()> {
             config,
             poll_interval,
         }) => {
+            detach_console();
             let config = config.unwrap_or_else(rgpu_core::config::default_config_path);
             info!("launching RGPU UI (config: {})", config);
 
@@ -382,6 +374,7 @@ async fn main() -> anyhow::Result<()> {
 
         None => {
             // Default: launch UI when no subcommand is given (e.g. double-click on Windows/macOS)
+            detach_console();
             let config = rgpu_core::config::default_config_path();
             info!("launching RGPU UI (default, config: {})", config);
             let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);

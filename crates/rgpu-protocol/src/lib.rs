@@ -2,6 +2,8 @@ pub mod handle;
 pub mod messages;
 pub mod cuda_commands;
 pub mod vulkan_commands;
+pub mod nvenc_commands;
+pub mod nvdec_commands;
 pub mod gpu_info;
 pub mod wire;
 pub mod error;

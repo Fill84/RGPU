@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cuda_commands::{CudaCommand, CudaResponse};
+use crate::nvenc_commands::{NvencCommand, NvencResponse};
+use crate::nvdec_commands::{NvdecCommand, NvdecResponse};
 use crate::error::ProtocolError;
 use crate::gpu_info::GpuInfo;
 use crate::vulkan_commands::{VulkanCommand, VulkanResponse};
@@ -65,6 +67,26 @@ pub enum Message {
         response: VulkanResponse,
     },
 
+    // ── NVENC commands ──────────────────────────────────────
+    NvencCommand {
+        request_id: RequestId,
+        command: NvencCommand,
+    },
+    NvencResponse {
+        request_id: RequestId,
+        response: NvencResponse,
+    },
+
+    // ── NVDEC commands ──────────────────────────────────────
+    NvdecCommand {
+        request_id: RequestId,
+        command: NvdecCommand,
+    },
+    NvdecResponse {
+        request_id: RequestId,
+        response: NvdecResponse,
+    },
+
     // ── Batching ────────────────────────────────────────────
     /// Batched CUDA commands for pipelining (void commands sent fire-and-forget).
     CudaBatch(Vec<CudaCommand>),
@@ -81,6 +103,8 @@ pub enum Message {
         errors_total: u64,
         cuda_commands: u64,
         vulkan_commands: u64,
+        nvenc_commands: u64,
+        nvdec_commands: u64,
         uptime_secs: u64,
         server_id: u16,
         server_address: String,
@@ -95,4 +119,4 @@ pub enum Message {
 }
 
 /// Current protocol version.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;

@@ -10,6 +10,8 @@ members = [
     "crates/rgpu-cuda-interpose",
     "crates/rgpu-common",
     "crates/rgpu-ui",
+    "crates/rgpu-nvdec-interpose",
+    "crates/rgpu-nvenc-interpose",
 ]
 resolver = "2"
 

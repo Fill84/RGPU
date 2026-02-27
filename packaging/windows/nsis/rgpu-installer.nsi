@@ -179,6 +179,48 @@ Section "CUDA System-Wide Interpose (client only)" SEC_CUDA
 SectionEnd
 
 ;---------------------------------
+; Section: NVENC System-Wide Interpose
+;---------------------------------
+Section "NVENC Interpose (video encoding)" SEC_NVENC
+  SetOutPath "$INSTDIR\lib"
+  File "staging\rgpu_nvenc_interpose.dll"
+
+  ; Back up the real NVIDIA nvEncodeAPI64.dll if it exists
+  IfFileExists "$SYSDIR\nvEncodeAPI64.dll" 0 no_nvenc_backup_needed
+    IfFileExists "$SYSDIR\nvEncodeAPI64_real.dll" skip_nvenc_backup
+      DetailPrint "Backing up original nvEncodeAPI64.dll..."
+      CopyFiles /SILENT "$SYSDIR\nvEncodeAPI64.dll" "$SYSDIR\nvEncodeAPI64_real.dll"
+      WriteRegStr HKLM "Software\RGPU" "NvEncBackedUp" "1"
+    skip_nvenc_backup:
+  no_nvenc_backup_needed:
+
+  DetailPrint "Installing RGPU NVENC interpose as $SYSDIR\nvEncodeAPI64.dll..."
+  CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvenc_interpose.dll" "$SYSDIR\nvEncodeAPI64.dll"
+  WriteRegStr HKLM "Software\RGPU" "NvencInterposed" "1"
+SectionEnd
+
+;---------------------------------
+; Section: NVDEC System-Wide Interpose
+;---------------------------------
+Section "NVDEC Interpose (video decoding)" SEC_NVDEC
+  SetOutPath "$INSTDIR\lib"
+  File "staging\rgpu_nvdec_interpose.dll"
+
+  ; Back up the real NVIDIA nvcuvid.dll if it exists
+  IfFileExists "$SYSDIR\nvcuvid.dll" 0 no_nvdec_backup_needed
+    IfFileExists "$SYSDIR\nvcuvid_real.dll" skip_nvdec_backup
+      DetailPrint "Backing up original nvcuvid.dll..."
+      CopyFiles /SILENT "$SYSDIR\nvcuvid.dll" "$SYSDIR\nvcuvid_real.dll"
+      WriteRegStr HKLM "Software\RGPU" "NvDecBackedUp" "1"
+    skip_nvdec_backup:
+  no_nvdec_backup_needed:
+
+  DetailPrint "Installing RGPU NVDEC interpose as $SYSDIR\nvcuvid.dll..."
+  CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvdec_interpose.dll" "$SYSDIR\nvcuvid.dll"
+  WriteRegStr HKLM "Software\RGPU" "NvdecInterposed" "1"
+SectionEnd
+
+;---------------------------------
 ; Section: Vulkan ICD Driver
 ;---------------------------------
 Section "Vulkan ICD Driver" SEC_VULKAN
@@ -232,18 +274,31 @@ SectionEnd
 ; (must be after all Section definitions so SEC_* identifiers are resolved)
 ;---------------------------------
 Function .onSelChange
-  ; Warn if both Server Service and CUDA Interpose are selected
+  ; Warn if both Server Service and any interpose components are selected
   SectionGetFlags ${SEC_SERVICE} $0
-  SectionGetFlags ${SEC_CUDA} $1
   IntOp $0 $0 & 1
-  IntOp $1 $1 & 1
   IntCmp $0 0 no_conflict
-  IntCmp $1 0 no_conflict
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION "WARNING: Installing CUDA interpose on a server machine will replace nvcuda.dll and break direct GPU access. Only install on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
-    ; Deselect CUDA if user says No
+
+  SectionGetFlags ${SEC_CUDA} $1
+  SectionGetFlags ${SEC_NVENC} $2
+  SectionGetFlags ${SEC_NVDEC} $3
+  IntOp $1 $1 & 1
+  IntOp $2 $2 & 1
+  IntOp $3 $3 & 1
+  IntOp $4 $1 | $2
+  IntOp $4 $4 | $3
+  IntCmp $4 0 no_conflict
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION "WARNING: Installing interpose libraries on a server machine will replace NVIDIA DLLs and break direct GPU access. Only install interpose components on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
+    ; Deselect interpose components if user says No
     SectionGetFlags ${SEC_CUDA} $0
     IntOp $0 $0 & 0xFFFFFFFE
     SectionSetFlags ${SEC_CUDA} $0
+    SectionGetFlags ${SEC_NVENC} $0
+    IntOp $0 $0 & 0xFFFFFFFE
+    SectionSetFlags ${SEC_NVENC} $0
+    SectionGetFlags ${SEC_NVDEC} $0
+    IntOp $0 $0 & 0xFFFFFFFE
+    SectionSetFlags ${SEC_NVDEC} $0
   no_conflict:
 FunctionEnd
 
@@ -255,6 +310,10 @@ FunctionEnd
     "The RGPU command-line tool and GUI. Required."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CUDA} \
     "System-wide CUDA interception. Replaces nvcuda.dll in System32 so ALL applications use remote GPUs. WARNING: Do NOT install on machines running the RGPU server."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVENC} \
+    "System-wide NVENC (video encoding) interception. Replaces nvEncodeAPI64.dll so hardware encoding (h264_nvenc, hevc_nvenc) uses the remote GPU."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVDEC} \
+    "System-wide NVDEC (video decoding) interception. Replaces nvcuvid.dll so hardware decoding (h264_cuvid, hevc_cuvid) uses the remote GPU."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VULKAN} \
     "Vulkan Installable Client Driver (ICD) for presenting remote GPUs as local Vulkan devices."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SERVICE} \
@@ -289,6 +348,32 @@ Section "Uninstall"
       Delete "$SYSDIR\nvcuda.dll"
   skip_cuda_restore:
 
+  ; Restore original nvEncodeAPI64.dll (NVENC)
+  ReadRegStr $0 HKLM "Software\RGPU" "NvencInterposed"
+  StrCmp $0 "1" 0 skip_nvenc_restore
+    IfFileExists "$SYSDIR\nvEncodeAPI64_real.dll" 0 remove_our_nvenc
+      DetailPrint "Restoring original nvEncodeAPI64.dll from backup..."
+      Delete "$SYSDIR\nvEncodeAPI64.dll"
+      CopyFiles /SILENT "$SYSDIR\nvEncodeAPI64_real.dll" "$SYSDIR\nvEncodeAPI64.dll"
+      Delete "$SYSDIR\nvEncodeAPI64_real.dll"
+      Goto skip_nvenc_restore
+    remove_our_nvenc:
+      Delete "$SYSDIR\nvEncodeAPI64.dll"
+  skip_nvenc_restore:
+
+  ; Restore original nvcuvid.dll (NVDEC)
+  ReadRegStr $0 HKLM "Software\RGPU" "NvdecInterposed"
+  StrCmp $0 "1" 0 skip_nvdec_restore
+    IfFileExists "$SYSDIR\nvcuvid_real.dll" 0 remove_our_nvdec
+      DetailPrint "Restoring original nvcuvid.dll from backup..."
+      Delete "$SYSDIR\nvcuvid.dll"
+      CopyFiles /SILENT "$SYSDIR\nvcuvid_real.dll" "$SYSDIR\nvcuvid.dll"
+      Delete "$SYSDIR\nvcuvid_real.dll"
+      Goto skip_nvdec_restore
+    remove_our_nvdec:
+      Delete "$SYSDIR\nvcuvid.dll"
+  skip_nvdec_restore:
+
   ; Remove Vulkan ICD registry entry
   DeleteRegValue HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$INSTDIR\lib\rgpu_icd.json"
 
@@ -304,6 +389,8 @@ Section "Uninstall"
   Delete "$INSTDIR\bin\rgpu.exe"
   Delete "$INSTDIR\bin\icon.ico"
   Delete "$INSTDIR\lib\rgpu_cuda_interpose.dll"
+  Delete "$INSTDIR\lib\rgpu_nvenc_interpose.dll"
+  Delete "$INSTDIR\lib\rgpu_nvdec_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_vk_icd.dll"
   Delete "$INSTDIR\lib\rgpu_icd.json"
   Delete "$INSTDIR\uninstall.exe"

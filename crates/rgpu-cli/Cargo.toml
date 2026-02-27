@@ -45,6 +45,8 @@ depends = "$auto"
 assets = [
     ["target/release/rgpu", "usr/bin/rgpu", "755"],
     ["target/release/librgpu_cuda_interpose.so", "usr/lib/rgpu/librgpu_cuda_interpose.so", "644"],
+    ["target/release/librgpu_nvenc_interpose.so", "usr/lib/rgpu/librgpu_nvenc_interpose.so", "644"],
+    ["target/release/librgpu_nvdec_interpose.so", "usr/lib/rgpu/librgpu_nvdec_interpose.so", "644"],
     ["target/release/librgpu_vk_icd.so", "usr/lib/rgpu/librgpu_vk_icd.so", "644"],
     ["../../packaging/config/rgpu_icd_linux.json", "usr/share/vulkan/icd.d/rgpu_icd.json", "644"],
     ["../../packaging/config/rgpu.toml.template", "etc/rgpu/rgpu.toml", "644"],
@@ -65,6 +67,8 @@ maintainer-scripts = "../../packaging/linux/deb/"
 assets = [
     { source = "target/release/rgpu", dest = "/usr/bin/rgpu", mode = "0755" },
     { source = "target/release/librgpu_cuda_interpose.so", dest = "/usr/lib/rgpu/librgpu_cuda_interpose.so", mode = "0644" },
+    { source = "target/release/librgpu_nvenc_interpose.so", dest = "/usr/lib/rgpu/librgpu_nvenc_interpose.so", mode = "0644" },
+    { source = "target/release/librgpu_nvdec_interpose.so", dest = "/usr/lib/rgpu/librgpu_nvdec_interpose.so", mode = "0644" },
     { source = "target/release/librgpu_vk_icd.so", dest = "/usr/lib/rgpu/librgpu_vk_icd.so", mode = "0644" },
     { source = "../../packaging/config/rgpu_icd_linux.json", dest = "/usr/share/vulkan/icd.d/rgpu_icd.json", mode = "0644" },
     { source = "../../packaging/config/rgpu.toml.template", dest = "/etc/rgpu/rgpu.toml", mode = "0644", config = true },

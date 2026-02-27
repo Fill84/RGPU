@@ -15,6 +15,8 @@ use rgpu_transport::connection::RgpuConnection;
 use rgpu_transport::tls;
 
 use crate::cuda_executor::CudaExecutor;
+use crate::nvdec_executor::NvdecExecutor;
+use crate::nvenc_executor::NvencExecutor;
 use crate::vulkan_executor::VulkanExecutor;
 use crate::gpu_discovery;
 use crate::session::Session;
@@ -27,6 +29,8 @@ pub struct ServerMetrics {
     pub errors_total: AtomicU64,
     pub cuda_commands: AtomicU64,
     pub vulkan_commands: AtomicU64,
+    pub nvenc_commands: AtomicU64,
+    pub nvdec_commands: AtomicU64,
     pub start_time: std::time::Instant,
     pub bind_address: parking_lot::RwLock<String>,
 }
@@ -40,6 +44,8 @@ impl ServerMetrics {
             errors_total: AtomicU64::new(0),
             cuda_commands: AtomicU64::new(0),
             vulkan_commands: AtomicU64::new(0),
+            nvenc_commands: AtomicU64::new(0),
+            nvdec_commands: AtomicU64::new(0),
             start_time: std::time::Instant::now(),
             bind_address: parking_lot::RwLock::new(String::new()),
         }
@@ -52,6 +58,8 @@ pub struct RgpuServer {
     gpu_infos: Vec<GpuInfo>,
     cuda_executor: Arc<CudaExecutor>,
     vulkan_executor: Arc<VulkanExecutor>,
+    nvenc_executor: Arc<NvencExecutor>,
+    nvdec_executor: Arc<NvdecExecutor>,
     next_session_id: AtomicU32,
     /// Accepted authentication tokens (empty = no auth required)
     accepted_tokens: Vec<rgpu_core::config::TokenEntry>,
@@ -67,12 +75,16 @@ impl RgpuServer {
         let gpu_infos = gpu_discovery::discover_gpus(config.server_id);
         let cuda_executor = Arc::new(CudaExecutor::new(gpu_infos.clone()));
         let vulkan_executor = Arc::new(VulkanExecutor::new());
+        let nvenc_executor = Arc::new(NvencExecutor::new(cuda_executor.clone()));
+        let nvdec_executor = Arc::new(NvdecExecutor::new());
 
         Self {
             config,
             gpu_infos,
             cuda_executor,
             vulkan_executor,
+            nvenc_executor,
+            nvdec_executor,
             next_session_id: AtomicU32::new(1),
             accepted_tokens,
             metrics: Arc::new(ServerMetrics::new()),
@@ -121,6 +133,8 @@ impl RgpuServer {
                             errors = metrics.errors_total.load(Ordering::Relaxed),
                             cuda = metrics.cuda_commands.load(Ordering::Relaxed),
                             vulkan = metrics.vulkan_commands.load(Ordering::Relaxed),
+                            nvenc = metrics.nvenc_commands.load(Ordering::Relaxed),
+                            nvdec = metrics.nvdec_commands.load(Ordering::Relaxed),
                             "metrics snapshot"
                         );
                     }
@@ -172,6 +186,8 @@ impl RgpuServer {
                             errors = metrics.errors_total.load(Ordering::Relaxed),
                             cuda = metrics.cuda_commands.load(Ordering::Relaxed),
                             vulkan = metrics.vulkan_commands.load(Ordering::Relaxed),
+                            nvenc = metrics.nvenc_commands.load(Ordering::Relaxed),
+                            nvdec = metrics.nvdec_commands.load(Ordering::Relaxed),
                             "metrics snapshot"
                         );
                     }
@@ -232,6 +248,8 @@ impl RgpuServer {
 
                     let cuda_executor = self.cuda_executor.clone();
                     let vulkan_executor = self.vulkan_executor.clone();
+                    let nvenc_executor = self.nvenc_executor.clone();
+                    let nvdec_executor = self.nvdec_executor.clone();
                     let gpu_infos = self.gpu_infos.clone();
                     let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
                     let server_id = self.config.server_id;
@@ -257,6 +275,8 @@ impl RgpuServer {
                                                 gpu_infos,
                                                 cuda_executor,
                                                 vulkan_executor,
+                                                nvenc_executor,
+                                                nvdec_executor,
                                                 accepted_tokens,
                                                 metrics.clone(),
                                             )
@@ -281,6 +301,8 @@ impl RgpuServer {
                                 gpu_infos_clone,
                                 cuda_executor,
                                 vulkan_executor,
+                                nvenc_executor,
+                                nvdec_executor,
                                 accepted_tokens,
                                 metrics.clone(),
                             )
@@ -354,6 +376,8 @@ impl RgpuServer {
 
                     let cuda_executor = self.cuda_executor.clone();
                     let vulkan_executor = self.vulkan_executor.clone();
+                    let nvenc_executor = self.nvenc_executor.clone();
+                    let nvdec_executor = self.nvdec_executor.clone();
                     let gpu_infos = self.gpu_infos.clone();
                     let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
                     let server_id = self.config.server_id;
@@ -378,6 +402,8 @@ impl RgpuServer {
                                     gpu_infos,
                                     cuda_executor,
                                     vulkan_executor,
+                                    nvenc_executor,
+                                    nvdec_executor,
                                     accepted_tokens,
                                     metrics.clone(),
                                 )
@@ -431,6 +457,8 @@ impl RgpuServer {
         gpu_infos: Vec<GpuInfo>,
         cuda_executor: Arc<CudaExecutor>,
         vulkan_executor: Arc<VulkanExecutor>,
+        nvenc_executor: Arc<NvencExecutor>,
+        nvdec_executor: Arc<NvdecExecutor>,
         _accepted_tokens: Vec<rgpu_core::config::TokenEntry>,
         metrics: Arc<ServerMetrics>,
     ) {
@@ -487,7 +515,7 @@ impl RgpuServer {
                 }
             };
 
-            let response = Self::handle_message(&session, msg, &gpu_infos, &cuda_executor, &vulkan_executor, &metrics);
+            let response = Self::handle_message(&session, msg, &gpu_infos, &cuda_executor, &vulkan_executor, &nvenc_executor, &nvdec_executor, &metrics);
 
             // Send response
             if let Some(resp) = response {
@@ -512,6 +540,8 @@ impl RgpuServer {
         }
         cuda_executor.cleanup_session(&session);
         vulkan_executor.cleanup_session(&session);
+        nvenc_executor.cleanup_session(&session);
+        nvdec_executor.cleanup_session(&session);
         info!(session_id, "client session ended");
     }
 
@@ -523,6 +553,8 @@ impl RgpuServer {
         gpu_infos: Vec<GpuInfo>,
         cuda_executor: Arc<CudaExecutor>,
         vulkan_executor: Arc<VulkanExecutor>,
+        nvenc_executor: Arc<NvencExecutor>,
+        nvdec_executor: Arc<NvdecExecutor>,
         _accepted_tokens: Vec<rgpu_core::config::TokenEntry>,
         metrics: Arc<ServerMetrics>,
     ) {
@@ -533,7 +565,7 @@ impl RgpuServer {
             match tokio::time::timeout(Duration::from_secs(120), conn.recv()).await {
                 Ok(Ok(msg)) => {
                     let response =
-                        Self::handle_message(&session, msg, &gpu_infos, &cuda_executor, &vulkan_executor, &metrics);
+                        Self::handle_message(&session, msg, &gpu_infos, &cuda_executor, &vulkan_executor, &nvenc_executor, &nvdec_executor, &metrics);
                     if let Some(resp) = response {
                         if let Err(e) = conn.send(resp).await {
                             error!(session_id, "send error: {}", e);
@@ -558,6 +590,8 @@ impl RgpuServer {
         }
         cuda_executor.cleanup_session(&session);
         vulkan_executor.cleanup_session(&session);
+        nvenc_executor.cleanup_session(&session);
+        nvdec_executor.cleanup_session(&session);
         info!(session_id, "client session ended");
     }
 
@@ -570,6 +604,8 @@ impl RgpuServer {
         gpu_infos: Vec<GpuInfo>,
         cuda_executor: Arc<CudaExecutor>,
         vulkan_executor: Arc<VulkanExecutor>,
+        nvenc_executor: Arc<NvencExecutor>,
+        nvdec_executor: Arc<NvdecExecutor>,
         _accepted_tokens: Vec<rgpu_core::config::TokenEntry>,
         metrics: Arc<ServerMetrics>,
     ) {
@@ -582,6 +618,8 @@ impl RgpuServer {
                 Ok((mut send, mut recv)) => {
                     let cuda_exec = cuda_executor.clone();
                     let vulkan_exec = vulkan_executor.clone();
+                    let nvenc_exec = nvenc_executor.clone();
+                    let nvdec_exec = nvdec_executor.clone();
                     let gpu_infos = gpu_infos.clone();
                     let session = session.clone();
                     let metrics = metrics.clone();
@@ -618,7 +656,7 @@ impl RgpuServer {
 
                         // Handle and respond
                         if let Some(resp) = Self::handle_message(
-                            &session, msg, &gpu_infos, &cuda_exec, &vulkan_exec, &metrics,
+                            &session, msg, &gpu_infos, &cuda_exec, &vulkan_exec, &nvenc_exec, &nvdec_exec, &metrics,
                         ) {
                             match wire::encode_message(&resp, 0) {
                                 Ok(frame) => {
@@ -649,6 +687,8 @@ impl RgpuServer {
         }
         cuda_executor.cleanup_session(&session);
         vulkan_executor.cleanup_session(&session);
+        nvenc_executor.cleanup_session(&session);
+        nvdec_executor.cleanup_session(&session);
         info!(session_id, "QUIC client session ended");
     }
 
@@ -659,6 +699,8 @@ impl RgpuServer {
         gpu_infos: &[GpuInfo],
         cuda_executor: &CudaExecutor,
         vulkan_executor: &VulkanExecutor,
+        nvenc_executor: &NvencExecutor,
+        nvdec_executor: &NvdecExecutor,
         metrics: &ServerMetrics,
     ) -> Option<Message> {
         metrics.requests_total.fetch_add(1, Ordering::Relaxed);
@@ -669,6 +711,12 @@ impl RgpuServer {
             }
             Message::VulkanCommand { .. } => {
                 metrics.vulkan_commands.fetch_add(1, Ordering::Relaxed);
+            }
+            Message::NvencCommand { .. } => {
+                metrics.nvenc_commands.fetch_add(1, Ordering::Relaxed);
+            }
+            Message::NvdecCommand { .. } => {
+                metrics.nvdec_commands.fetch_add(1, Ordering::Relaxed);
             }
             _ => {}
         }
@@ -715,6 +763,8 @@ impl RgpuServer {
                 errors_total: metrics.errors_total.load(Ordering::Relaxed),
                 cuda_commands: metrics.cuda_commands.load(Ordering::Relaxed),
                 vulkan_commands: metrics.vulkan_commands.load(Ordering::Relaxed),
+                nvenc_commands: metrics.nvenc_commands.load(Ordering::Relaxed),
+                nvdec_commands: metrics.nvdec_commands.load(Ordering::Relaxed),
                 uptime_secs: metrics.start_time.elapsed().as_secs(),
                 server_id: session.server_id(),
                 server_address: metrics.bind_address.read().clone(),
@@ -758,6 +808,28 @@ impl RgpuServer {
                     request_id: rgpu_protocol::messages::RequestId(0),
                     response: rgpu_protocol::cuda_commands::CudaResponse::Success,
                 }))
+            }
+
+            Message::NvencCommand {
+                request_id,
+                command,
+            } => {
+                let response = nvenc_executor.execute(session, command);
+                Some(Message::NvencResponse {
+                    request_id,
+                    response,
+                })
+            }
+
+            Message::NvdecCommand {
+                request_id,
+                command,
+            } => {
+                let response = nvdec_executor.execute(session, command);
+                Some(Message::NvdecResponse {
+                    request_id,
+                    response,
+                })
             }
 
             Message::Ping => Some(Message::Pong),

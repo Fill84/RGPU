@@ -100,6 +100,12 @@ pub async fn run_verify(config_path: &str, json: bool) -> anyhow::Result<()> {
     // Check 6: Vulkan ICD
     check_vulkan_icd(&mut results);
 
+    // Check 7: NVENC interpose
+    check_nvenc_interpose(&mut results);
+
+    // Check 8: NVDEC interpose
+    check_nvdec_interpose(&mut results);
+
     // Output
     if json {
         print_results_json(&results);
@@ -685,6 +691,242 @@ fn check_vulkan_icd_linux(results: &mut Vec<CheckResult>) {
     results.push(
         CheckResult::warn("Vulkan ICD", "RGPU Vulkan ICD manifest not found")
             .detail("Expected at: /usr/share/vulkan/icd.d/rgpu_icd.json")
+            .detail("Install via .deb/.rpm package"),
+    );
+}
+
+// ── Check 7: NVENC Interpose ─────────────────────────────────────────────────
+
+fn check_nvenc_interpose(results: &mut Vec<CheckResult>) {
+    #[cfg(windows)]
+    {
+        check_nvenc_interpose_windows(results);
+    }
+    #[cfg(not(windows))]
+    {
+        check_nvenc_interpose_linux(results);
+    }
+}
+
+#[cfg(windows)]
+fn check_nvenc_interpose_windows(results: &mut Vec<CheckResult>) {
+    let system_root =
+        std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let nvenc_path = format!(r"{}\System32\nvEncodeAPI64.dll", system_root);
+    let backup_path = format!(r"{}\System32\nvEncodeAPI64_real.dll", system_root);
+
+    if !std::path::Path::new(&nvenc_path).exists() {
+        results.push(
+            CheckResult::warn("NVENC interpose", "nvEncodeAPI64.dll not found in System32")
+                .detail("No NVENC runtime installed or RGPU not yet installed"),
+        );
+        return;
+    }
+
+    match std::fs::read(&nvenc_path) {
+        Ok(data) => {
+            let marker = b"rgpu_interpose_marker";
+            if data
+                .windows(marker.len())
+                .any(|w| w == marker.as_slice())
+            {
+                let mut result = CheckResult::pass(
+                    "NVENC interpose",
+                    "RGPU NVENC interpose DLL installed in System32",
+                )
+                .detail(&format!("Path: {}", nvenc_path));
+
+                if std::path::Path::new(&backup_path).exists() {
+                    result = result
+                        .detail("Original NVIDIA encoder backed up as nvEncodeAPI64_real.dll");
+                } else {
+                    result = result
+                        .detail("WARNING: nvEncodeAPI64_real.dll backup not found");
+                }
+                results.push(result);
+            } else {
+                results.push(
+                    CheckResult::warn(
+                        "NVENC interpose",
+                        "nvEncodeAPI64.dll is the original NVIDIA encoder (not RGPU interpose)",
+                    )
+                    .detail("Run the RGPU installer and select 'NVENC Interpose'"),
+                );
+            }
+        }
+        Err(e) => {
+            results.push(
+                CheckResult::fail(
+                    "NVENC interpose",
+                    &format!("Cannot read {}: {}", nvenc_path, e),
+                )
+                .detail("You may need administrator privileges"),
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn check_nvenc_interpose_linux(results: &mut Vec<CheckResult>) {
+    let paths = [
+        "/usr/lib/rgpu/librgpu_nvenc_interpose.so",
+        "/usr/local/lib/rgpu/librgpu_nvenc_interpose.so",
+    ];
+
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            match unsafe { libloading::Library::new(path) } {
+                Ok(lib) => {
+                    let marker: Result<
+                        libloading::Symbol<extern "C" fn() -> i32>,
+                        _,
+                    > = unsafe { lib.get(b"rgpu_interpose_marker") };
+                    if marker.is_ok() {
+                        results.push(
+                            CheckResult::pass(
+                                "NVENC interpose",
+                                &format!("Found at {}", path),
+                            )
+                            .detail(&format!(
+                                "Use: LD_PRELOAD={} <application>",
+                                path
+                            )),
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    results.push(CheckResult::warn(
+                        "NVENC interpose",
+                        &format!("Found at {} but cannot load: {}", path, e),
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    results.push(
+        CheckResult::warn("NVENC interpose", "NVENC interpose library not found")
+            .detail("Expected at: /usr/lib/rgpu/librgpu_nvenc_interpose.so")
+            .detail("Install via .deb/.rpm package"),
+    );
+}
+
+// ── Check 8: NVDEC Interpose ─────────────────────────────────────────────────
+
+fn check_nvdec_interpose(results: &mut Vec<CheckResult>) {
+    #[cfg(windows)]
+    {
+        check_nvdec_interpose_windows(results);
+    }
+    #[cfg(not(windows))]
+    {
+        check_nvdec_interpose_linux(results);
+    }
+}
+
+#[cfg(windows)]
+fn check_nvdec_interpose_windows(results: &mut Vec<CheckResult>) {
+    let system_root =
+        std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let nvdec_path = format!(r"{}\System32\nvcuvid.dll", system_root);
+    let backup_path = format!(r"{}\System32\nvcuvid_real.dll", system_root);
+
+    if !std::path::Path::new(&nvdec_path).exists() {
+        results.push(
+            CheckResult::warn("NVDEC interpose", "nvcuvid.dll not found in System32")
+                .detail("No NVDEC runtime installed or RGPU not yet installed"),
+        );
+        return;
+    }
+
+    match std::fs::read(&nvdec_path) {
+        Ok(data) => {
+            let marker = b"rgpu_interpose_marker";
+            if data
+                .windows(marker.len())
+                .any(|w| w == marker.as_slice())
+            {
+                let mut result = CheckResult::pass(
+                    "NVDEC interpose",
+                    "RGPU NVDEC interpose DLL installed in System32",
+                )
+                .detail(&format!("Path: {}", nvdec_path));
+
+                if std::path::Path::new(&backup_path).exists() {
+                    result = result
+                        .detail("Original NVIDIA decoder backed up as nvcuvid_real.dll");
+                } else {
+                    result = result
+                        .detail("WARNING: nvcuvid_real.dll backup not found");
+                }
+                results.push(result);
+            } else {
+                results.push(
+                    CheckResult::warn(
+                        "NVDEC interpose",
+                        "nvcuvid.dll is the original NVIDIA decoder (not RGPU interpose)",
+                    )
+                    .detail("Run the RGPU installer and select 'NVDEC Interpose'"),
+                );
+            }
+        }
+        Err(e) => {
+            results.push(
+                CheckResult::fail(
+                    "NVDEC interpose",
+                    &format!("Cannot read {}: {}", nvdec_path, e),
+                )
+                .detail("You may need administrator privileges"),
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn check_nvdec_interpose_linux(results: &mut Vec<CheckResult>) {
+    let paths = [
+        "/usr/lib/rgpu/librgpu_nvdec_interpose.so",
+        "/usr/local/lib/rgpu/librgpu_nvdec_interpose.so",
+    ];
+
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            match unsafe { libloading::Library::new(path) } {
+                Ok(lib) => {
+                    let marker: Result<
+                        libloading::Symbol<extern "C" fn() -> i32>,
+                        _,
+                    > = unsafe { lib.get(b"rgpu_interpose_marker") };
+                    if marker.is_ok() {
+                        results.push(
+                            CheckResult::pass(
+                                "NVDEC interpose",
+                                &format!("Found at {}", path),
+                            )
+                            .detail(&format!(
+                                "Use: LD_PRELOAD={} <application>",
+                                path
+                            )),
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    results.push(CheckResult::warn(
+                        "NVDEC interpose",
+                        &format!("Found at {} but cannot load: {}", path, e),
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    results.push(
+        CheckResult::warn("NVDEC interpose", "NVDEC interpose library not found")
+            .detail("Expected at: /usr/lib/rgpu/librgpu_nvdec_interpose.so")
             .detail("Install via .deb/.rpm package"),
     );
 }

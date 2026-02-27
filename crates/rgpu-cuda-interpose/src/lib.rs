@@ -1298,6 +1298,17 @@ pub unsafe extern "C" fn cuLinkDestroy(state: CUlinkState) -> CUresult {
 // ── Memory Management Extended ──────────────────────────────────────
 
 #[no_mangle]
+pub unsafe extern "C" fn cuMemcpy(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize) -> CUresult {
+    let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_src = match handle_store::get_mem_by_ptr(src) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    match send_cuda_command(CudaCommand::MemcpyDtoD { dst: net_dst, src: net_src, byte_count: byte_count as u64 }) {
+        CudaResponse::Success => CUDA_SUCCESS,
+        CudaResponse::Error { code, .. } => code,
+        _ => CUDA_ERROR_UNKNOWN,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cuMemcpyDtoD_v2(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize) -> CUresult {
     let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
     let net_src = match handle_store::get_mem_by_ptr(src) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
@@ -1338,6 +1349,18 @@ pub unsafe extern "C" fn cuMemcpyDtoHAsync_v2(dst: *mut c_void, src: CUdeviceptr
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn cuMemcpyAsync(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize, hstream: CUstream) -> CUresult {
+    let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_src = match handle_store::get_mem_by_ptr(src) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_stream = if (hstream as u64) == 0 { null_stream_handle() } else { handle_store::get_stream(hstream as u64).unwrap_or_else(null_stream_handle) };
+    match send_cuda_command(CudaCommand::MemcpyDtoDAsync { dst: net_dst, src: net_src, byte_count: byte_count as u64, stream: net_stream }) {
+        CudaResponse::Success => CUDA_SUCCESS,
+        CudaResponse::Error { code, .. } => code,
+        _ => CUDA_ERROR_UNKNOWN,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn cuMemcpyDtoDAsync_v2(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize, hstream: CUstream) -> CUresult {
     let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
     let net_src = match handle_store::get_mem_by_ptr(src) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
@@ -1347,6 +1370,128 @@ pub unsafe extern "C" fn cuMemcpyDtoDAsync_v2(dst: CUdeviceptr, src: CUdeviceptr
         CudaResponse::Error { code, .. } => code,
         _ => CUDA_ERROR_UNKNOWN,
     }
+}
+
+// ── 2D Memory Copy ─────────────────────────────────────────────────
+
+/// CUDA_MEMCPY2D struct for 2D memory copy operations.
+#[repr(C)]
+struct CUDA_MEMCPY2D {
+    src_x_in_bytes: usize,
+    src_y: usize,
+    src_memory_type: u32, // CU_MEMORYTYPE_*
+    src_host: *const c_void,
+    src_device: CUdeviceptr,
+    src_array: *mut c_void,
+    src_pitch: usize,
+    dst_x_in_bytes: usize,
+    dst_y: usize,
+    dst_memory_type: u32,
+    dst_host: *mut c_void,
+    dst_device: CUdeviceptr,
+    dst_array: *mut c_void,
+    dst_pitch: usize,
+    width_in_bytes: usize,
+    height: usize,
+}
+
+const CU_MEMORYTYPE_HOST: u32 = 1;
+const CU_MEMORYTYPE_DEVICE: u32 = 2;
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpy2D_v2(p_copy: *const CUDA_MEMCPY2D) -> CUresult {
+    if p_copy.is_null() { return CUDA_ERROR_INVALID_VALUE; }
+    let c = &*p_copy;
+
+    match (c.src_memory_type, c.dst_memory_type) {
+        (CU_MEMORYTYPE_HOST, CU_MEMORYTYPE_DEVICE) => {
+            // Host to Device: pack all row data and send as single HtoD
+            let net_dst = match handle_store::get_mem_by_ptr(c.dst_device) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+            let mut packed = Vec::with_capacity(c.width_in_bytes * c.height);
+            for row in 0..c.height {
+                let src_ptr = (c.src_host as *const u8).add(
+                    (c.src_y + row) * c.src_pitch + c.src_x_in_bytes,
+                );
+                packed.extend_from_slice(std::slice::from_raw_parts(src_ptr, c.width_in_bytes));
+            }
+            // Send as a pitched HtoD copy: we send packed data + metadata
+            // The server will unpack based on dst_pitch
+            match send_cuda_command(CudaCommand::Memcpy2DHtoD {
+                dst: net_dst,
+                dst_x_in_bytes: c.dst_x_in_bytes as u64,
+                dst_y: c.dst_y as u64,
+                dst_pitch: c.dst_pitch as u64,
+                src_data: packed,
+                width_in_bytes: c.width_in_bytes as u64,
+                height: c.height as u64,
+            }) {
+                CudaResponse::Success => CUDA_SUCCESS,
+                CudaResponse::Error { code, .. } => code,
+                _ => CUDA_ERROR_UNKNOWN,
+            }
+        }
+        (CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_HOST) => {
+            // Device to Host: fetch all data and unpack row by row
+            let net_src = match handle_store::get_mem_by_ptr(c.src_device) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+            match send_cuda_command(CudaCommand::Memcpy2DDtoH {
+                src: net_src,
+                src_x_in_bytes: c.src_x_in_bytes as u64,
+                src_y: c.src_y as u64,
+                src_pitch: c.src_pitch as u64,
+                width_in_bytes: c.width_in_bytes as u64,
+                height: c.height as u64,
+            }) {
+                CudaResponse::MemoryData(data) => {
+                    // data is packed row-major (width_in_bytes * height)
+                    for row in 0..c.height {
+                        let dst_ptr = (c.dst_host as *mut u8).add(
+                            (c.dst_y + row) * c.dst_pitch + c.dst_x_in_bytes,
+                        );
+                        let src_offset = row * c.width_in_bytes;
+                        std::ptr::copy_nonoverlapping(
+                            data.as_ptr().add(src_offset),
+                            dst_ptr,
+                            c.width_in_bytes,
+                        );
+                    }
+                    CUDA_SUCCESS
+                }
+                CudaResponse::Error { code, .. } => code,
+                _ => CUDA_ERROR_UNKNOWN,
+            }
+        }
+        (CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_DEVICE) => {
+            // Device to Device: use existing DtoD
+            let net_dst = match handle_store::get_mem_by_ptr(c.dst_device) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+            let net_src = match handle_store::get_mem_by_ptr(c.src_device) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+            match send_cuda_command(CudaCommand::Memcpy2DDtoD {
+                dst: net_dst,
+                dst_x_in_bytes: c.dst_x_in_bytes as u64,
+                dst_y: c.dst_y as u64,
+                dst_pitch: c.dst_pitch as u64,
+                src: net_src,
+                src_x_in_bytes: c.src_x_in_bytes as u64,
+                src_y: c.src_y as u64,
+                src_pitch: c.src_pitch as u64,
+                width_in_bytes: c.width_in_bytes as u64,
+                height: c.height as u64,
+            }) {
+                CudaResponse::Success => CUDA_SUCCESS,
+                CudaResponse::Error { code, .. } => code,
+                _ => CUDA_ERROR_UNKNOWN,
+            }
+        }
+        _ => {
+            error!("cuMemcpy2D: unsupported memory type combination src={} dst={}", c.src_memory_type, c.dst_memory_type);
+            CUDA_ERROR_INVALID_VALUE
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpy2DAsync_v2(p_copy: *const CUDA_MEMCPY2D, _hstream: CUstream) -> CUresult {
+    // For now, implement as synchronous — the server will handle it synchronously anyway
+    cuMemcpy2D_v2(p_copy)
 }
 
 #[no_mangle]
@@ -1373,6 +1518,39 @@ pub unsafe extern "C" fn cuMemsetD16_v2(dst: CUdeviceptr, value: u16, count: usi
 pub unsafe extern "C" fn cuMemsetD32_v2(dst: CUdeviceptr, value: u32, count: usize) -> CUresult {
     let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
     match send_cuda_command(CudaCommand::MemsetD32 { dst: net_dst, value, count: count as u64 }) {
+        CudaResponse::Success => CUDA_SUCCESS,
+        CudaResponse::Error { code, .. } => code,
+        _ => CUDA_ERROR_UNKNOWN,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD8Async(dst: CUdeviceptr, value: u8, count: usize, hstream: CUstream) -> CUresult {
+    let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_stream = if (hstream as u64) == 0 { null_stream_handle() } else { handle_store::get_stream(hstream as u64).unwrap_or_else(null_stream_handle) };
+    match send_cuda_command(CudaCommand::MemsetD8Async { dst: net_dst, value, count: count as u64, stream: net_stream }) {
+        CudaResponse::Success => CUDA_SUCCESS,
+        CudaResponse::Error { code, .. } => code,
+        _ => CUDA_ERROR_UNKNOWN,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD16Async(dst: CUdeviceptr, value: u16, count: usize, hstream: CUstream) -> CUresult {
+    let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_stream = if (hstream as u64) == 0 { null_stream_handle() } else { handle_store::get_stream(hstream as u64).unwrap_or_else(null_stream_handle) };
+    match send_cuda_command(CudaCommand::MemsetD16Async { dst: net_dst, value, count: count as u64, stream: net_stream }) {
+        CudaResponse::Success => CUDA_SUCCESS,
+        CudaResponse::Error { code, .. } => code,
+        _ => CUDA_ERROR_UNKNOWN,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD32Async(dst: CUdeviceptr, value: u32, count: usize, hstream: CUstream) -> CUresult {
+    let net_dst = match handle_store::get_mem_by_ptr(dst) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    let net_stream = if (hstream as u64) == 0 { null_stream_handle() } else { handle_store::get_stream(hstream as u64).unwrap_or_else(null_stream_handle) };
+    match send_cuda_command(CudaCommand::MemsetD32Async { dst: net_dst, value, count: count as u64, stream: net_stream }) {
         CudaResponse::Success => CUDA_SUCCESS,
         CudaResponse::Error { code, .. } => code,
         _ => CUDA_ERROR_UNKNOWN,
@@ -1812,4 +1990,168 @@ unsafe fn parse_elf_size(ptr: *const u8) -> Option<usize> {
 
     let total = e_shoff + (e_shentsize * e_shnum);
     Some(total as usize)
+}
+
+// ── Unversioned Export Aliases ──────────────────────────────────────
+// FFmpeg's nv-codec-headers loads symbols via GetProcAddress/dlsym using
+// unversioned names. We must export these as aliases to our _v2 implementations.
+
+#[no_mangle]
+pub unsafe extern "C" fn cuDevicePrimaryCtxRelease(dev: CUdevice) -> CUresult {
+    cuDevicePrimaryCtxRelease_v2(dev)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuDevicePrimaryCtxReset(dev: CUdevice) -> CUresult {
+    cuDevicePrimaryCtxReset_v2(dev)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuDevicePrimaryCtxSetFlags(dev: CUdevice, flags: c_uint) -> CUresult {
+    cuDevicePrimaryCtxSetFlags_v2(dev, flags)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuCtxCreate(pctx: *mut CUcontext, flags: c_uint, dev: CUdevice) -> CUresult {
+    cuCtxCreate_v2(pctx, flags, dev)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuCtxDestroy(ctx: CUcontext) -> CUresult {
+    cuCtxDestroy_v2(ctx)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuCtxPushCurrent(ctx: CUcontext) -> CUresult {
+    cuCtxPushCurrent_v2(ctx)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuCtxPopCurrent(pctx: *mut CUcontext) -> CUresult {
+    cuCtxPopCurrent_v2(pctx)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemAlloc(dptr: *mut CUdeviceptr, bytesize: usize) -> CUresult {
+    cuMemAlloc_v2(dptr, bytesize)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemFree(dptr: CUdeviceptr) -> CUresult {
+    cuMemFree_v2(dptr)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyHtoD(dst: CUdeviceptr, src: *const c_void, byte_count: usize) -> CUresult {
+    cuMemcpyHtoD_v2(dst, src, byte_count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyDtoH(dst: *mut c_void, src: CUdeviceptr, byte_count: usize) -> CUresult {
+    cuMemcpyDtoH_v2(dst, src, byte_count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyDtoD(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize) -> CUresult {
+    cuMemcpyDtoD_v2(dst, src, byte_count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyHtoDAsync(dst: CUdeviceptr, src: *const c_void, byte_count: usize, hstream: CUstream) -> CUresult {
+    cuMemcpyHtoDAsync_v2(dst, src, byte_count, hstream)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyDtoHAsync(dst: *mut c_void, src: CUdeviceptr, byte_count: usize, hstream: CUstream) -> CUresult {
+    cuMemcpyDtoHAsync_v2(dst, src, byte_count, hstream)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpyDtoDAsync(dst: CUdeviceptr, src: CUdeviceptr, byte_count: usize, hstream: CUstream) -> CUresult {
+    cuMemcpyDtoDAsync_v2(dst, src, byte_count, hstream)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpy2D(p_copy: *const CUDA_MEMCPY2D) -> CUresult {
+    cuMemcpy2D_v2(p_copy)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemcpy2DAsync(p_copy: *const CUDA_MEMCPY2D, hstream: CUstream) -> CUresult {
+    cuMemcpy2DAsync_v2(p_copy, hstream)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD8(dst: CUdeviceptr, value: u8, count: usize) -> CUresult {
+    cuMemsetD8_v2(dst, value, count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD16(dst: CUdeviceptr, value: u16, count: usize) -> CUresult {
+    cuMemsetD16_v2(dst, value, count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemsetD32(dst: CUdeviceptr, value: u32, count: usize) -> CUresult {
+    cuMemsetD32_v2(dst, value, count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemGetInfo(free: *mut usize, total: *mut usize) -> CUresult {
+    cuMemGetInfo_v2(free, total)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemGetAddressRange(pbase: *mut CUdeviceptr, psize: *mut usize, dptr: CUdeviceptr) -> CUresult {
+    cuMemGetAddressRange_v2(pbase, psize, dptr)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemAllocHost(pp: *mut *mut c_void, bytesize: usize) -> CUresult {
+    cuMemAllocHost_v2(pp, bytesize)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemHostGetDevicePointer(pdptr: *mut CUdeviceptr, p: *mut c_void, flags: c_uint) -> CUresult {
+    cuMemHostGetDevicePointer_v2(pdptr, p, flags)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuMemAllocPitch(dptr: *mut CUdeviceptr, ppitch: *mut usize, width: usize, height: usize, element_size: c_uint) -> CUresult {
+    cuMemAllocPitch_v2(dptr, ppitch, width, height, element_size)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuDeviceTotalMem(bytes: *mut u64, device: CUdevice) -> CUresult {
+    cuDeviceTotalMem_v2(bytes, device)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuStreamDestroy(hstream: CUstream) -> CUresult {
+    cuStreamDestroy_v2(hstream)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuEventDestroy(hevent: CUevent) -> CUresult {
+    cuEventDestroy_v2(hevent)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuModuleGetGlobal(dptr: *mut CUdeviceptr, bytes: *mut usize, hmod: CUmodule, name: *const c_char) -> CUresult {
+    cuModuleGetGlobal_v2(dptr, bytes, hmod, name)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuLinkCreate(num_options: c_uint, option_keys: *mut c_int, option_values: *mut *mut c_void, state_out: *mut CUlinkState) -> CUresult {
+    cuLinkCreate_v2(num_options, option_keys, option_values, state_out)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuLinkAddData(state: CUlinkState, jit_type: c_int, data: *mut c_void, size: usize, name: *const c_char, num_options: c_uint, options: *mut c_int, option_values: *mut *mut c_void) -> CUresult {
+    cuLinkAddData_v2(state, jit_type, data, size, name, num_options, options, option_values)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cuStreamGetCtx(hstream: CUstream, pctx: *mut CUcontext) -> CUresult {
+    cuStreamGetCtx_v2(hstream, pctx)
 }

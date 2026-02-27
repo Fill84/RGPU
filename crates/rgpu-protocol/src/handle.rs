@@ -82,4 +82,17 @@ pub enum ResourceType {
     CuHostPtr,
     CuMemPool,
     CuLinker,
+
+    // NVENC resources
+    NvEncSession,
+    NvEncInputBuffer,
+    NvEncBitstreamBuffer,
+    NvEncRegisteredResource,
+    NvEncMappedResource,
+    NvEncAsyncEvent,
+
+    // NVDEC resources
+    CuVideoDecoder,
+    CuVideoParser,
+    CuVideoCtxLock,
 }

@@ -11,6 +11,8 @@ use rgpu_protocol::cuda_commands::{CudaCommand, CudaResponse};
 use rgpu_protocol::gpu_info::GpuInfo;
 use rgpu_protocol::handle::NetworkHandle;
 use rgpu_protocol::messages::{Message, RequestId, PROTOCOL_VERSION};
+use rgpu_protocol::nvdec_commands::{NvdecCommand, NvdecResponse};
+use rgpu_protocol::nvenc_commands::{NvencCommand, NvencResponse};
 use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
 use rgpu_protocol::wire;
 use rgpu_transport::auth;
@@ -68,6 +70,10 @@ pub struct ClientDaemon {
     local_cuda_executor: Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
     /// Local Vulkan executor for include_local_gpus (executes Vulkan commands on the client's own GPU)
     local_vulkan_executor: Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    /// Local NVENC executor for include_local_gpus
+    local_nvenc_executor: Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
+    /// Local NVDEC executor for include_local_gpus
+    local_nvdec_executor: Option<Arc<rgpu_server::nvdec_executor::NvdecExecutor>>,
     /// Local session for handle allocation on local GPU
     local_session: Option<Arc<rgpu_server::session::Session>>,
 }
@@ -77,24 +83,26 @@ impl ClientDaemon {
         let ordering = config.gpu_ordering.clone();
 
         // If include_local_gpus is enabled, discover and initialize local GPU executors
-        let (local_cuda, local_vulkan, local_session) = if config.include_local_gpus {
+        let (local_cuda, local_vulkan, local_nvenc, local_nvdec, local_session) = if config.include_local_gpus {
             let local_gpus = rgpu_server::gpu_discovery::discover_gpus(LOCAL_SERVER_ID);
             if !local_gpus.is_empty() {
                 info!("discovered {} local GPU(s) for direct execution", local_gpus.len());
                 let cuda = Arc::new(rgpu_server::cuda_executor::CudaExecutor::new(local_gpus));
                 let vulkan = Arc::new(rgpu_server::vulkan_executor::VulkanExecutor::new());
+                let nvenc = Arc::new(rgpu_server::nvenc_executor::NvencExecutor::new(cuda.clone()));
+                let nvdec = Arc::new(rgpu_server::nvdec_executor::NvdecExecutor::new());
                 let session = Arc::new(rgpu_server::session::Session::new(
                     0,
                     LOCAL_SERVER_ID,
                     "local".to_string(),
                 ));
-                (Some(cuda), Some(vulkan), Some(session))
+                (Some(cuda), Some(vulkan), Some(nvenc), Some(nvdec), Some(session))
             } else {
                 info!("include_local_gpus enabled but no local GPUs found");
-                (None, None, None)
+                (None, None, None, None, None)
             }
         } else {
-            (None, None, None)
+            (None, None, None, None, None)
         };
 
         Self {
@@ -105,6 +113,8 @@ impl ClientDaemon {
             endpoints: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             local_cuda_executor: local_cuda,
             local_vulkan_executor: local_vulkan,
+            local_nvenc_executor: local_nvenc,
+            local_nvdec_executor: local_nvdec,
             local_session,
         }
     }
@@ -192,6 +202,8 @@ impl ClientDaemon {
         let pool_manager = self.pool_manager.clone();
         let local_cuda = self.local_cuda_executor.clone();
         let local_vulkan = self.local_vulkan_executor.clone();
+        let local_nvenc = self.local_nvenc_executor.clone();
+        let local_nvdec = self.local_nvdec_executor.clone();
         let local_session = self.local_session.clone();
 
         info!("starting IPC listener on {}", ipc_path);
@@ -199,7 +211,7 @@ impl ClientDaemon {
         let ipc_future = crate::ipc::start_ipc_listener(&ipc_path, move |msg| {
             handle_ipc_message(
                 &cached_gpus, &server_conns, &endpoints, &pool_manager,
-                &local_cuda, &local_vulkan, &local_session,
+                &local_cuda, &local_vulkan, &local_nvenc, &local_nvdec, &local_session,
                 msg,
             )
         });
@@ -558,6 +570,9 @@ fn extract_cuda_routing_handle(cmd: &CudaCommand) -> Option<NetworkHandle> {
         CudaCommand::MemcpyHtoDAsync { dst, .. } => Some(*dst),
         CudaCommand::MemcpyDtoHAsync { src, .. } => Some(*src),
         CudaCommand::MemcpyDtoDAsync { dst, .. } => Some(*dst),
+        CudaCommand::Memcpy2DHtoD { dst, .. } => Some(*dst),
+        CudaCommand::Memcpy2DDtoH { src, .. } => Some(*src),
+        CudaCommand::Memcpy2DDtoD { dst, .. } => Some(*dst),
         CudaCommand::MemsetD8 { dst, .. } => Some(*dst),
         CudaCommand::MemsetD16 { dst, .. } => Some(*dst),
         CudaCommand::MemsetD32 { dst, .. } => Some(*dst),
@@ -709,6 +724,80 @@ fn extract_vulkan_routing_handle(cmd: &VulkanCommand) -> Option<NetworkHandle> {
     }
 }
 
+// ── NVENC Handle Extraction ──────────────────────────────────────────
+
+/// Extract the primary NetworkHandle from an NVENC command for routing.
+/// Returns None for global commands (GetMaxSupportedVersion).
+fn extract_nvenc_routing_handle(cmd: &NvencCommand) -> Option<NetworkHandle> {
+    match cmd {
+        // Global — no routing handle
+        NvencCommand::GetMaxSupportedVersion => None,
+
+        // Session creation — route via CUDA context handle
+        NvencCommand::OpenEncodeSession { cuda_context, .. } => Some(*cuda_context),
+
+        // All other commands route via the encoder session handle
+        NvencCommand::DestroyEncoder { encoder }
+        | NvencCommand::GetEncodeGUIDCount { encoder }
+        | NvencCommand::GetEncodeGUIDs { encoder }
+        | NvencCommand::GetEncodePresetCount { encoder, .. }
+        | NvencCommand::GetEncodePresetGUIDs { encoder, .. }
+        | NvencCommand::GetEncodePresetConfig { encoder, .. }
+        | NvencCommand::GetEncodeCaps { encoder, .. }
+        | NvencCommand::GetInputFormatCount { encoder, .. }
+        | NvencCommand::GetInputFormats { encoder, .. }
+        | NvencCommand::InitializeEncoder { encoder, .. }
+        | NvencCommand::ReconfigureEncoder { encoder, .. }
+        | NvencCommand::CreateInputBuffer { encoder, .. }
+        | NvencCommand::DestroyInputBuffer { encoder, .. }
+        | NvencCommand::LockInputBuffer { encoder, .. }
+        | NvencCommand::UnlockInputBuffer { encoder, .. }
+        | NvencCommand::CreateBitstreamBuffer { encoder, .. }
+        | NvencCommand::DestroyBitstreamBuffer { encoder, .. }
+        | NvencCommand::LockBitstream { encoder, .. }
+        | NvencCommand::UnlockBitstream { encoder, .. }
+        | NvencCommand::RegisterResource { encoder, .. }
+        | NvencCommand::UnregisterResource { encoder, .. }
+        | NvencCommand::MapInputResource { encoder, .. }
+        | NvencCommand::UnmapInputResource { encoder, .. }
+        | NvencCommand::EncodePicture { encoder, .. }
+        | NvencCommand::GetSequenceParams { encoder, .. }
+        | NvencCommand::GetEncodeStats { encoder, .. }
+        | NvencCommand::InvalidateRefFrames { encoder, .. }
+        | NvencCommand::RegisterAsyncEvent { encoder, .. }
+        | NvencCommand::UnregisterAsyncEvent { encoder, .. } => Some(*encoder),
+    }
+}
+
+// ── NVDEC Handle Extraction ──────────────────────────────────────────
+
+/// Extract the primary NetworkHandle from an NVDEC command for routing.
+/// Returns None for global commands (GetDecoderCaps, CreateDecoder).
+fn extract_nvdec_routing_handle(cmd: &NvdecCommand) -> Option<NetworkHandle> {
+    match cmd {
+        // Global / creation commands — no routing handle
+        NvdecCommand::GetDecoderCaps { .. }
+        | NvdecCommand::CreateDecoder { .. } => None,
+
+        // Decoder commands — route via decoder handle
+        NvdecCommand::DestroyDecoder { decoder }
+        | NvdecCommand::DecodePicture { decoder, .. }
+        | NvdecCommand::GetDecodeStatus { decoder, .. }
+        | NvdecCommand::ReconfigureDecoder { decoder, .. }
+        | NvdecCommand::MapVideoFrame { decoder, .. }
+        | NvdecCommand::UnmapVideoFrame { decoder, .. } => Some(*decoder),
+
+        // Parser commands — route via parser handle
+        NvdecCommand::CreateVideoParser { .. } => None,
+        NvdecCommand::ParseVideoData { parser, .. }
+        | NvdecCommand::DestroyVideoParser { parser } => Some(*parser),
+
+        // Context lock — route via cuda_context or lock handle
+        NvdecCommand::CtxLockCreate { cuda_context } => Some(*cuda_context),
+        NvdecCommand::CtxLockDestroy { lock } => Some(*lock),
+    }
+}
+
 // ── Server Resolution ────────────────────────────────────────────────
 
 /// Resolve which server_conns index to use for a given routing handle.
@@ -736,6 +825,8 @@ fn handle_ipc_message(
     pool_manager: &Arc<GpuPoolManager>,
     local_cuda_executor: &Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
     local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_nvenc_executor: &Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
+    local_nvdec_executor: &Option<Arc<rgpu_server::nvdec_executor::NvdecExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
     msg: Message,
 ) -> Option<Message> {
@@ -827,12 +918,56 @@ fn handle_ipc_message(
                                 response: CudaResponse::Success,
                             });
                         }
-                        return make_error_response(RequestId(0), true, "local GPU not available");
+                        return make_error_response(RequestId(0), ApiType::Cuda, "local GPU not available");
                     }
 
                     let batch_msg = Message::CudaBatch(commands);
                     let request_id = RequestId(0);
-                    forward_to_server(&conns, &eps, server_idx, request_id, &batch_msg, true).await
+                    forward_to_server(&conns, &eps, server_idx, request_id, &batch_msg, ApiType::Cuda).await
+                })
+            });
+            Some(response)
+        }
+
+        Message::NvencCommand {
+            request_id,
+            command,
+        } => {
+            let conns = server_conns.clone();
+            let eps = endpoints.clone();
+            let pm = pool_manager.clone();
+            let local_nvenc = local_nvenc_executor.clone();
+            let local_sess = local_session.clone();
+
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    forward_nvenc_command_pooled(
+                        &conns, &eps, &pm,
+                        &local_nvenc, &local_sess,
+                        request_id, command,
+                    ).await
+                })
+            });
+            Some(response)
+        }
+
+        Message::NvdecCommand {
+            request_id,
+            command,
+        } => {
+            let conns = server_conns.clone();
+            let eps = endpoints.clone();
+            let pm = pool_manager.clone();
+            let local_nvdec = local_nvdec_executor.clone();
+            let local_sess = local_session.clone();
+
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    forward_nvdec_command_pooled(
+                        &conns, &eps, &pm,
+                        &local_nvdec, &local_sess,
+                        request_id, command,
+                    ).await
                 })
             });
             Some(response)
@@ -891,7 +1026,7 @@ async fn forward_cuda_command_pooled(
                     let response = executor.execute(session, local_cmd);
                     return Message::CudaResponse { request_id, response };
                 }
-                return make_error_response(request_id, true, "local GPU not available");
+                return make_error_response(request_id, ApiType::Cuda, "local GPU not available");
             }
 
             let remapped_cmd = CudaCommand::DeviceGet {
@@ -919,7 +1054,7 @@ async fn forward_cuda_command_pooled(
             let response = executor.execute(session, command);
             return Message::CudaResponse { request_id, response };
         }
-        return make_error_response(request_id, true, "local GPU not available");
+        return make_error_response(request_id, ApiType::Cuda, "local GPU not available");
     }
 
     let msg = Message::CudaCommand {
@@ -927,7 +1062,7 @@ async fn forward_cuda_command_pooled(
         command,
     };
 
-    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, true).await
+    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, ApiType::Cuda).await
 }
 
 /// Forward a CUDA command to a specific server by index.
@@ -942,7 +1077,7 @@ async fn forward_cuda_to_server(
         request_id,
         command,
     };
-    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, true).await
+    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, ApiType::Cuda).await
 }
 
 // ── Vulkan Forwarding ────────────────────────────────────────────────
@@ -988,7 +1123,7 @@ async fn forward_vulkan_command_pooled(
             let response = executor.execute(session, command);
             return Message::VulkanResponse { request_id, response };
         }
-        return make_error_response(request_id, false, "local Vulkan not available");
+        return make_error_response(request_id, ApiType::Vulkan, "local Vulkan not available");
     }
 
     let msg = Message::VulkanCommand {
@@ -996,7 +1131,7 @@ async fn forward_vulkan_command_pooled(
         command,
     };
 
-    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, false).await
+    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, ApiType::Vulkan).await
 }
 
 // ── Broadcast Vulkan Commands ────────────────────────────────────────
@@ -1046,7 +1181,7 @@ async fn broadcast_vulkan_create_instance(
             request_id,
             command: command.clone(),
         };
-        let resp = forward_to_server(server_conns, endpoints, idx, request_id, &msg, false).await;
+        let resp = forward_to_server(server_conns, endpoints, idx, request_id, &msg, ApiType::Vulkan).await;
 
         if let Message::VulkanResponse {
             response: VulkanResponse::InstanceCreated { handle },
@@ -1104,7 +1239,7 @@ async fn broadcast_vulkan_enumerate_physical_devices(
             request_id,
             command: VulkanCommand::EnumeratePhysicalDevices { instance },
         };
-        let resp = forward_to_server(server_conns, endpoints, idx, request_id, &msg, false).await;
+        let resp = forward_to_server(server_conns, endpoints, idx, request_id, &msg, ApiType::Vulkan).await;
 
         if let Message::VulkanResponse {
             response: VulkanResponse::PhysicalDevices { handles },
@@ -1128,6 +1263,76 @@ async fn broadcast_vulkan_enumerate_physical_devices(
     }
 }
 
+// ── NVENC Forwarding ─────────────────────────────────────────────────
+
+/// Forward an NVENC command using the pooled persistent connection.
+/// Routes to the correct server based on handle's server_id.
+/// If the target is the local GPU, executes directly via the local executor.
+async fn forward_nvenc_command_pooled(
+    server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
+    endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
+    pool_manager: &Arc<GpuPoolManager>,
+    local_nvenc_executor: &Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
+    request_id: RequestId,
+    command: NvencCommand,
+) -> Message {
+    // Determine target server from handle
+    let routing_handle = extract_nvenc_routing_handle(&command);
+    let server_idx = resolve_server_index(pool_manager, routing_handle).await;
+
+    // Check if this targets the local GPU
+    if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+        if let (Some(executor), Some(session)) = (local_nvenc_executor, local_session) {
+            let response = executor.execute(session, command);
+            return Message::NvencResponse { request_id, response };
+        }
+        return make_error_response(request_id, ApiType::Nvenc, "local NVENC not available");
+    }
+
+    let msg = Message::NvencCommand {
+        request_id,
+        command,
+    };
+
+    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, ApiType::Nvenc).await
+}
+
+// ── NVDEC Forwarding ─────────────────────────────────────────────────
+
+/// Forward an NVDEC command using the pooled persistent connection.
+/// Routes to the correct server based on handle's server_id.
+/// If the target is the local GPU, executes directly via the local executor.
+async fn forward_nvdec_command_pooled(
+    server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
+    endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
+    pool_manager: &Arc<GpuPoolManager>,
+    local_nvdec_executor: &Option<Arc<rgpu_server::nvdec_executor::NvdecExecutor>>,
+    local_session: &Option<Arc<rgpu_server::session::Session>>,
+    request_id: RequestId,
+    command: NvdecCommand,
+) -> Message {
+    // Determine target server from handle
+    let routing_handle = extract_nvdec_routing_handle(&command);
+    let server_idx = resolve_server_index(pool_manager, routing_handle).await;
+
+    // Check if this targets the local GPU
+    if server_idx == crate::pool_manager::LOCAL_SERVER_INDEX {
+        if let (Some(executor), Some(session)) = (local_nvdec_executor, local_session) {
+            let response = executor.execute(session, command);
+            return Message::NvdecResponse { request_id, response };
+        }
+        return make_error_response(request_id, ApiType::Nvdec, "local NVDEC not available");
+    }
+
+    let msg = Message::NvdecCommand {
+        request_id,
+        command,
+    };
+
+    forward_to_server(server_conns, endpoints, server_idx, request_id, &msg, ApiType::Nvdec).await
+}
+
 // ── Generic Forwarding with Reconnect ────────────────────────────────
 
 /// Forward a message to a specific server, with reconnection on failure.
@@ -1137,13 +1342,13 @@ async fn forward_to_server(
     server_idx: usize,
     request_id: RequestId,
     msg: &Message,
-    is_cuda: bool,
+    api: ApiType,
 ) -> Message {
     let conns = server_conns.read().await;
     let eps = endpoints.read().await;
 
     if server_idx >= conns.len() || server_idx >= eps.len() {
-        return make_error_response(request_id, is_cuda, "server index out of range");
+        return make_error_response(request_id, api, "server index out of range");
     }
 
     let conn_slot = conns[server_idx].clone();
@@ -1189,27 +1394,49 @@ async fn forward_to_server(
         }
     }
 
-    make_error_response(request_id, is_cuda, "failed to communicate with server")
+    make_error_response(request_id, api, "failed to communicate with server")
 }
 
-/// Create an appropriate error response message.
-fn make_error_response(request_id: RequestId, is_cuda: bool, msg: &str) -> Message {
-    if is_cuda {
-        Message::CudaResponse {
+/// Identifies which API the error response should be formatted for.
+#[derive(Clone, Copy)]
+enum ApiType {
+    Cuda,
+    Vulkan,
+    Nvenc,
+    Nvdec,
+}
+
+/// Create an appropriate error response message for the given API type.
+fn make_error_response(request_id: RequestId, api: ApiType, msg: &str) -> Message {
+    match api {
+        ApiType::Cuda => Message::CudaResponse {
             request_id,
             response: CudaResponse::Error {
                 code: 100,
                 message: msg.to_string(),
             },
-        }
-    } else {
-        Message::VulkanResponse {
+        },
+        ApiType::Vulkan => Message::VulkanResponse {
             request_id,
             response: VulkanResponse::Error {
                 code: -3,
                 message: msg.to_string(),
             },
-        }
+        },
+        ApiType::Nvenc => Message::NvencResponse {
+            request_id,
+            response: NvencResponse::Error {
+                code: -1,
+                message: msg.to_string(),
+            },
+        },
+        ApiType::Nvdec => Message::NvdecResponse {
+            request_id,
+            response: NvdecResponse::Error {
+                code: 999,
+                message: msg.to_string(),
+            },
+        },
     }
 }
 

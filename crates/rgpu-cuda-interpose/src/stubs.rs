@@ -111,10 +111,14 @@ const CUDA_SUCCESS: CUresult = 0;
 // ── CUDA Array Stubs ─────────────────────────────────────────────
 
 #[no_mangle] pub unsafe extern "C" fn cuArrayCreate(_array: *mut *mut std::ffi::c_void, _desc: *const std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuArrayCreate_v2(_array: *mut *mut std::ffi::c_void, _desc: *const std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArrayDestroy(_array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArray3DCreate(_array: *mut *mut std::ffi::c_void, _desc: *const std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuArray3DCreate_v2(_array: *mut *mut std::ffi::c_void, _desc: *const std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArrayGetDescriptor(_desc: *mut std::ffi::c_void, _array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuArrayGetDescriptor_v2(_desc: *mut std::ffi::c_void, _array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArray3DGetDescriptor(_desc: *mut std::ffi::c_void, _array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuArray3DGetDescriptor_v2(_desc: *mut std::ffi::c_void, _array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArrayGetSparseProperties(_props: *mut std::ffi::c_void, _array: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArrayGetMemoryRequirements(_reqs: *mut std::ffi::c_void, _array: *mut std::ffi::c_void, _device: c_int) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuArrayGetPlane(_plane_array: *mut *mut std::ffi::c_void, _array: *mut std::ffi::c_void, _plane_idx: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
@@ -134,4 +138,21 @@ const CUDA_SUCCESS: CUresult = 0;
 #[no_mangle] pub unsafe extern "C" fn cuGetExportTable(_table: *mut *const std::ffi::c_void, _id: *const std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_FOUND }
 #[no_mangle] pub unsafe extern "C" fn cuFlushGPUDirectRDMAWrites(_target: c_int, _scope: c_int) -> CUresult { CUDA_SUCCESS }
 #[no_mangle] pub unsafe extern "C" fn cuMemHostRegister(_p: *mut std::ffi::c_void, _byte_size: usize, _flags: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuMemHostRegister_v2(_p: *mut std::ffi::c_void, _byte_size: usize, _flags: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
 #[no_mangle] pub unsafe extern "C" fn cuMemHostUnregister(_p: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+
+// ── OpenGL Interop Stubs ────────────────────────────────────────
+#[no_mangle] pub unsafe extern "C" fn cuGLGetDevices(_count: *mut u32, _devices: *mut c_int, _max: u32, _list: c_int) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGLGetDevices_v2(_count: *mut u32, _devices: *mut c_int, _max: u32, _list: c_int) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsGLRegisterImage(_resource: *mut *mut std::ffi::c_void, _image: u32, _target: u32, _flags: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsUnregisterResource(_resource: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsMapResources(_count: u32, _resources: *mut *mut std::ffi::c_void, _stream: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsUnmapResources(_count: u32, _resources: *mut *mut std::ffi::c_void, _stream: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsSubResourceGetMappedArray(_array: *mut *mut std::ffi::c_void, _resource: *mut std::ffi::c_void, _index: u32, _level: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsResourceGetMappedPointer(_devptr: *mut u64, _size: *mut usize, _resource: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsResourceGetMappedPointer_v2(_devptr: *mut u64, _size: *mut usize, _resource: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+
+// ── D3D11 Interop Stubs (Windows) ───────────────────────────────
+#[no_mangle] pub unsafe extern "C" fn cuD3D11GetDevice(_device: *mut c_int, _adapter: *mut std::ffi::c_void) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuD3D11GetDevices(_count: *mut u32, _devices: *mut c_int, _max: u32, _d3d_device: *mut std::ffi::c_void, _set: c_int) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
+#[no_mangle] pub unsafe extern "C" fn cuGraphicsD3D11RegisterResource(_resource: *mut *mut std::ffi::c_void, _d3d_resource: *mut std::ffi::c_void, _flags: u32) -> CUresult { CUDA_ERROR_NOT_SUPPORTED }
