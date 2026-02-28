@@ -1,6 +1,8 @@
 mod app;
 mod data_fetcher;
 pub mod panels;
+pub mod service_control;
+pub mod service_detection;
 pub mod state;
 pub mod widgets;
 
@@ -11,14 +13,9 @@ use app::RgpuApp;
 /// This function blocks until the window is closed.
 ///
 /// # Arguments
-/// * `servers` - List of (address, token) pairs to connect to
-/// * `config_path` - Path to rgpu.toml for the config editor
-/// * `poll_interval` - Metrics poll interval in seconds
-pub fn launch_ui(
-    servers: Vec<(String, String)>,
-    config_path: String,
-    poll_interval: u64,
-) -> anyhow::Result<()> {
+/// * `config_path` - Path to rgpu.toml for configuration
+/// * `poll_interval` - Service probe interval in seconds
+pub fn launch_ui(config_path: String, poll_interval: u64) -> anyhow::Result<()> {
     let icon_image = image::load_from_memory(include_bytes!("../../../icon.png"))
         .expect("failed to load RGPU icon")
         .to_rgba8();
@@ -41,9 +38,7 @@ pub fn launch_ui(
     eframe::run_native(
         "RGPU",
         options,
-        Box::new(move |cc| {
-            Ok(Box::new(RgpuApp::new(cc, servers, config_path, poll_interval)))
-        }),
+        Box::new(move |cc| Ok(Box::new(RgpuApp::new(cc, config_path, poll_interval)))),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {}", e))
 }

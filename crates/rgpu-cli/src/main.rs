@@ -263,8 +263,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Some(Commands::Ui {
-            server,
-            token,
+            server: _,
+            token: _,
             config,
             poll_interval,
         }) => {
@@ -272,19 +272,7 @@ async fn main() -> anyhow::Result<()> {
             let config = config.unwrap_or_else(rgpu_core::config::default_config_path);
             info!("launching RGPU UI (config: {})", config);
 
-            // Collect servers from CLI args
-            let mut all_servers: Vec<(String, String)> = server
-                .into_iter()
-                .map(|addr| (addr, token.clone()))
-                .collect();
-
-            // Also load servers from config file
-            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);
-            for endpoint in &rgpu_config.client.servers {
-                all_servers.push((endpoint.address.clone(), endpoint.token.clone()));
-            }
-
-            rgpu_ui::launch_ui(all_servers, config, poll_interval)?;
+            rgpu_ui::launch_ui(config, poll_interval)?;
         }
 
         Some(Commands::Verify { config, json }) => {
@@ -377,14 +365,7 @@ async fn main() -> anyhow::Result<()> {
             detach_console();
             let config = rgpu_core::config::default_config_path();
             info!("launching RGPU UI (default, config: {})", config);
-            let rgpu_config = rgpu_core::config::RgpuConfig::load_or_default(&config);
-            let servers: Vec<(String, String)> = rgpu_config
-                .client
-                .servers
-                .iter()
-                .map(|s| (s.address.clone(), s.token.clone()))
-                .collect();
-            rgpu_ui::launch_ui(servers, config, 2)?;
+            rgpu_ui::launch_ui(config, 2)?;
         }
     }
 

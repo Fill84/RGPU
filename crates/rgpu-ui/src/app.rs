@@ -5,7 +5,7 @@ use egui::{Color32, RichText};
 
 use crate::data_fetcher;
 use crate::panels;
-use crate::state::{LocalServerStatus, UiState, UiTab};
+use crate::state::{ServiceStatus, UiState, UiTab};
 
 /// Main RGPU UI application.
 pub struct RgpuApp {
@@ -16,18 +16,13 @@ pub struct RgpuApp {
 impl RgpuApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        servers: Vec<(String, String)>,
         config_path: String,
         poll_interval: u64,
     ) -> Self {
         // Set dark mode by default
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
-        let state = Arc::new(Mutex::new(UiState::new(
-            servers,
-            config_path,
-            poll_interval,
-        )));
+        let state = Arc::new(Mutex::new(UiState::new(config_path, poll_interval)));
 
         // Start the background data fetcher
         let fetcher_handle =
@@ -56,25 +51,25 @@ impl eframe::App for RgpuApp {
                 let active = st.active_tab;
 
                 if ui
-                    .selectable_label(active == UiTab::Control, "Control")
+                    .selectable_label(active == UiTab::Dashboard, "Dashboard")
                     .clicked()
                 {
-                    st.active_tab = UiTab::Control;
+                    st.active_tab = UiTab::Dashboard;
                 }
                 if ui
-                    .selectable_label(active == UiTab::GpuOverview, "GPU Overview")
+                    .selectable_label(active == UiTab::Server, "Server")
                     .clicked()
                 {
-                    st.active_tab = UiTab::GpuOverview;
+                    st.active_tab = UiTab::Server;
                 }
                 if ui
-                    .selectable_label(active == UiTab::Metrics, "Metrics")
+                    .selectable_label(active == UiTab::Client, "Client")
                     .clicked()
                 {
-                    st.active_tab = UiTab::Metrics;
+                    st.active_tab = UiTab::Client;
                 }
                 if ui
-                    .selectable_label(active == UiTab::ConfigEditor, "Config Editor")
+                    .selectable_label(active == UiTab::ConfigEditor, "Config")
                     .clicked()
                 {
                     st.active_tab = UiTab::ConfigEditor;
@@ -86,54 +81,29 @@ impl eframe::App for RgpuApp {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let st = self.state.lock().unwrap();
-                let connected = st.connected_servers();
-                let total = st.servers.len();
-                let total_gpus = st.total_gpus();
 
-                // Embedded server status
-                let (server_text, server_color) = match &st.local_server_status {
-                    LocalServerStatus::Stopped => ("Server: Off", Color32::from_rgb(150, 150, 150)),
-                    LocalServerStatus::Starting => {
-                        ("Server: Starting", Color32::from_rgb(255, 200, 50))
-                    }
-                    LocalServerStatus::Running => {
-                        ("Server: Running", Color32::from_rgb(100, 200, 100))
-                    }
-                    LocalServerStatus::Stopping => {
-                        ("Server: Stopping", Color32::from_rgb(255, 165, 0))
-                    }
-                    LocalServerStatus::Error(_) => {
-                        ("Server: Error", Color32::from_rgb(255, 100, 100))
-                    }
-                };
-
+                // Server status
+                let (server_text, server_color) = status_label("Server", &st.server.status);
                 ui.label(RichText::new(server_text).color(server_color).small());
 
                 ui.separator();
 
-                let status_color = if connected == total && total > 0 {
-                    Color32::from_rgb(100, 200, 100)
-                } else if connected > 0 {
-                    Color32::from_rgb(255, 200, 50)
-                } else {
-                    Color32::from_rgb(255, 100, 100)
-                };
-
-                ui.label(
-                    RichText::new(format!(
-                        "Servers: {}/{} connected",
-                        connected, total
-                    ))
-                    .color(status_color)
-                    .small(),
-                );
+                // Client status
+                let (client_text, client_color) = status_label("Client", &st.client.status);
+                ui.label(RichText::new(client_text).color(client_color).small());
 
                 ui.separator();
 
+                // GPU counts
+                let server_gpus = st.server.served_gpus.len();
+                let client_gpus = st.client.gpu_pool.len();
                 ui.label(
-                    RichText::new(format!("{} GPU(s)", total_gpus))
-                        .small()
-                        .color(Color32::GRAY),
+                    RichText::new(format!(
+                        "GPUs: {} server, {} client pool",
+                        server_gpus, client_gpus
+                    ))
+                    .small()
+                    .color(Color32::GRAY),
                 );
 
                 // Show latest error if any
@@ -156,17 +126,17 @@ impl eframe::App for RgpuApp {
             };
 
             match active_tab {
-                UiTab::Control => {
+                UiTab::Dashboard => {
                     let mut st = self.state.lock().unwrap();
-                    panels::control::show(ui, &mut st);
+                    panels::dashboard::show(ui, &mut st);
                 }
-                UiTab::GpuOverview => {
-                    let st = self.state.lock().unwrap();
-                    panels::gpu_overview::show(ui, &st);
+                UiTab::Server => {
+                    let mut st = self.state.lock().unwrap();
+                    panels::server_panel::show(ui, &mut st);
                 }
-                UiTab::Metrics => {
-                    let st = self.state.lock().unwrap();
-                    panels::metrics::show(ui, &st);
+                UiTab::Client => {
+                    let mut st = self.state.lock().unwrap();
+                    panels::client_panel::show(ui, &mut st);
                 }
                 UiTab::ConfigEditor => {
                     let mut st = self.state.lock().unwrap();
@@ -177,10 +147,31 @@ impl eframe::App for RgpuApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // Signal the fetcher to stop (and stop the embedded server if running)
+        // Signal the fetcher to stop (and stop services if running embedded)
         if let Ok(mut st) = self.state.lock() {
             st.should_stop = true;
-            st.server_stop_requested = true;
+            st.server.stop_requested = true;
+            st.client.stop_requested = true;
+        }
+    }
+}
+
+/// Format a status label for the status bar.
+fn status_label(role: &str, status: &ServiceStatus) -> (String, Color32) {
+    match status {
+        ServiceStatus::Unknown => (format!("{}: --", role), Color32::from_rgb(150, 150, 150)),
+        ServiceStatus::Stopped => (format!("{}: Off", role), Color32::from_rgb(150, 150, 150)),
+        ServiceStatus::Starting => {
+            (format!("{}: Starting", role), Color32::from_rgb(255, 200, 50))
+        }
+        ServiceStatus::Running => {
+            (format!("{}: Running", role), Color32::from_rgb(100, 200, 100))
+        }
+        ServiceStatus::Stopping => {
+            (format!("{}: Stopping", role), Color32::from_rgb(255, 165, 0))
+        }
+        ServiceStatus::Error(_) => {
+            (format!("{}: Error", role), Color32::from_rgb(255, 100, 100))
         }
     }
 }

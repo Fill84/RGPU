@@ -1,4 +1,4 @@
-pub mod control;
-pub mod gpu_overview;
-pub mod metrics;
+pub mod dashboard;
+pub mod server_panel;
+pub mod client_panel;
 pub mod config_editor;

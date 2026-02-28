@@ -889,6 +889,42 @@ fn handle_ipc_message(
             Some(Message::GpuList(gpu_list))
         }
 
+        Message::QueryMetrics => {
+            let gpus = cached_gpus.clone();
+            let conns = server_conns.clone();
+
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let _gpu_count = gpus.read().await.len();
+                    let conn_list = conns.read().await;
+                    let connected_count = conn_list.iter()
+                        .filter(|c| {
+                            if let Ok(guard) = c.try_lock() {
+                                guard.is_some()
+                            } else {
+                                false
+                            }
+                        })
+                        .count();
+
+                    Message::MetricsData {
+                        connections_total: connected_count as u64,
+                        connections_active: connected_count as u32,
+                        requests_total: 0,
+                        errors_total: 0,
+                        cuda_commands: 0,
+                        vulkan_commands: 0,
+                        nvenc_commands: 0,
+                        nvdec_commands: 0,
+                        uptime_secs: 0,
+                        server_id: 0,
+                        server_address: "local-daemon".to_string(),
+                    }
+                })
+            });
+            Some(response)
+        }
+
         Message::CudaCommand {
             request_id,
             command,

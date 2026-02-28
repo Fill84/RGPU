@@ -10,6 +10,41 @@ pub const MAX_METRICS_HISTORY: usize = 300;
 /// Maximum number of error log entries.
 pub const MAX_ERROR_LOG: usize = 50;
 
+// ============================================================================
+// Shared types (used by both server and client roles)
+// ============================================================================
+
+/// How a service was detected or is being managed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceOrigin {
+    /// Not detected / not running
+    NotDetected,
+    /// Running as a Windows service managed by SCM
+    WindowsService,
+    /// Running as an external process (started via CLI)
+    ExternalProcess,
+    /// Embedded in this UI process
+    Embedded,
+}
+
+/// Generic service status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceStatus {
+    /// Not yet probed
+    Unknown,
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Error(String),
+}
+
+impl ServiceStatus {
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running)
+    }
+}
+
 /// Metrics snapshot from a single server at a point in time.
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
@@ -32,102 +67,28 @@ pub struct MetricsRates {
     pub errors_per_sec: f64,
 }
 
-/// Connection state for a server target.
-#[derive(Debug, Clone)]
-pub enum ServerConnectionState {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
-}
-
-impl ServerConnectionState {
-    pub fn is_connected(&self) -> bool {
-        matches!(self, Self::Connected)
-    }
-}
-
-/// Per-server state tracked by the UI.
-#[derive(Debug, Clone)]
-pub struct ServerState {
-    pub address: String,
-    pub token: String,
-    pub server_id: Option<u16>,
-    pub connection_state: ServerConnectionState,
-    pub gpus: Vec<GpuInfo>,
-    pub metrics_history: VecDeque<MetricsSnapshot>,
-    pub current_rates: MetricsRates,
-    /// Set by UI to request disconnect; fetcher will drop the connection.
-    pub should_disconnect: bool,
-}
-
-impl ServerState {
-    pub fn new(address: String, token: String) -> Self {
-        Self {
-            address,
-            token,
-            server_id: None,
-            connection_state: ServerConnectionState::Disconnected,
-            gpus: Vec::new(),
-            metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
-            current_rates: MetricsRates::default(),
-            should_disconnect: false,
+/// Compute rates from two consecutive snapshots.
+fn compute_rates(prev: &MetricsSnapshot, curr: &MetricsSnapshot) -> MetricsRates {
+    let dt = curr.timestamp.duration_since(prev.timestamp).as_secs_f64();
+    if dt > 0.0 {
+        MetricsRates {
+            requests_per_sec: (curr.requests_total.saturating_sub(prev.requests_total)) as f64
+                / dt,
+            cuda_per_sec: (curr.cuda_commands.saturating_sub(prev.cuda_commands)) as f64 / dt,
+            vulkan_per_sec: (curr.vulkan_commands.saturating_sub(prev.vulkan_commands)) as f64
+                / dt,
+            errors_per_sec: (curr.errors_total.saturating_sub(prev.errors_total)) as f64 / dt,
         }
-    }
-
-    pub fn latest_metrics(&self) -> Option<&MetricsSnapshot> {
-        self.metrics_history.back()
-    }
-
-    pub fn push_metrics(&mut self, snapshot: MetricsSnapshot) {
-        // Compute rates from previous snapshot
-        if let Some(prev) = self.metrics_history.back() {
-            let dt = snapshot.timestamp.duration_since(prev.timestamp).as_secs_f64();
-            if dt > 0.0 {
-                self.current_rates = MetricsRates {
-                    requests_per_sec: (snapshot.requests_total.saturating_sub(prev.requests_total))
-                        as f64
-                        / dt,
-                    cuda_per_sec: (snapshot.cuda_commands.saturating_sub(prev.cuda_commands))
-                        as f64
-                        / dt,
-                    vulkan_per_sec: (snapshot.vulkan_commands.saturating_sub(prev.vulkan_commands))
-                        as f64
-                        / dt,
-                    errors_per_sec: (snapshot.errors_total.saturating_sub(prev.errors_total))
-                        as f64
-                        / dt,
-                };
-            }
-        }
-
-        if self.metrics_history.len() >= MAX_METRICS_HISTORY {
-            self.metrics_history.pop_front();
-        }
-        self.metrics_history.push_back(snapshot);
+    } else {
+        MetricsRates::default()
     }
 }
 
-/// Active tab in the UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UiTab {
-    Control,
-    GpuOverview,
-    Metrics,
-    ConfigEditor,
-}
+// ============================================================================
+// Server role state
+// ============================================================================
 
-/// Status of the embedded server running inside the UI process.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LocalServerStatus {
-    Stopped,
-    Starting,
-    Running,
-    Stopping,
-    Error(String),
-}
-
-/// Configuration for the embedded server, edited in the Control panel.
+/// Configuration for the server, edited in the Server panel.
 #[derive(Debug, Clone)]
 pub struct LocalServerConfig {
     pub server_id: u16,
@@ -160,12 +121,159 @@ impl Default for LocalServerConfig {
     }
 }
 
-/// A pending connection request from the UI to be processed by the fetcher.
-#[derive(Debug, Clone)]
-pub struct PendingConnection {
-    pub address: String,
-    pub token: String,
+/// Server role state — GPUs being served, metrics, connected clients.
+pub struct ServerRoleState {
+    /// How the server is running
+    pub origin: ServiceOrigin,
+    pub status: ServiceStatus,
+
+    /// GPUs being served (from server's QueryGpus or direct gpu_infos())
+    pub served_gpus: Vec<GpuInfo>,
+
+    /// Server metrics
+    pub metrics: Option<MetricsSnapshot>,
+    pub metrics_history: VecDeque<MetricsSnapshot>,
+    pub rates: MetricsRates,
+
+    /// Server configuration (editable when stopped)
+    pub config: LocalServerConfig,
+
+    /// Connected client count (from metrics.connections_active)
+    pub connected_clients: u32,
+
+    // Control signals (UI -> fetcher)
+    pub start_requested: bool,
+    pub stop_requested: bool,
 }
+
+impl ServerRoleState {
+    pub fn new() -> Self {
+        Self {
+            origin: ServiceOrigin::NotDetected,
+            status: ServiceStatus::Unknown,
+            served_gpus: Vec::new(),
+            metrics: None,
+            metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
+            rates: MetricsRates::default(),
+            config: LocalServerConfig::default(),
+            connected_clients: 0,
+            start_requested: false,
+            stop_requested: false,
+        }
+    }
+
+    /// Push a metrics snapshot and compute rates from previous.
+    pub fn push_metrics(&mut self, snapshot: MetricsSnapshot) {
+        if let Some(prev) = self.metrics_history.back() {
+            self.rates = compute_rates(prev, &snapshot);
+        }
+        self.connected_clients = snapshot.connections_active;
+        if self.metrics_history.len() >= MAX_METRICS_HISTORY {
+            self.metrics_history.pop_front();
+        }
+        self.metrics = Some(snapshot.clone());
+        self.metrics_history.push_back(snapshot);
+    }
+
+    /// Clear all monitoring data (on server stop).
+    pub fn clear_monitoring(&mut self) {
+        self.served_gpus.clear();
+        self.metrics = None;
+        self.metrics_history.clear();
+        self.rates = MetricsRates::default();
+        self.connected_clients = 0;
+    }
+}
+
+// ============================================================================
+// Client role state
+// ============================================================================
+
+/// Status of interpose library installation.
+#[derive(Debug, Clone, Default)]
+pub struct InterposeStatus {
+    pub cuda: Option<bool>,
+    pub vulkan: Option<bool>,
+    pub nvenc: Option<bool>,
+    pub nvdec: Option<bool>,
+    pub nvml: Option<bool>,
+}
+
+/// A remote server as seen from the client daemon's perspective.
+#[derive(Debug, Clone)]
+pub struct ClientRemoteServer {
+    pub address: String,
+    pub server_id: Option<u16>,
+    pub connected: bool,
+    pub gpu_count: usize,
+}
+
+/// Client role state — GPU pool, connected servers, interpose status.
+pub struct ClientRoleState {
+    /// How the client daemon is running
+    pub origin: ServiceOrigin,
+    pub status: ServiceStatus,
+
+    /// GPU pool from the daemon (local + remote, ordered)
+    pub gpu_pool: Vec<GpuInfo>,
+
+    /// Remote servers the daemon is connected to (derived from GPU pool)
+    pub remote_servers: Vec<ClientRemoteServer>,
+
+    /// Interpose library installation status
+    pub interpose: InterposeStatus,
+
+    /// Client metrics (if daemon supports QueryMetrics)
+    pub metrics: Option<MetricsSnapshot>,
+    pub metrics_history: VecDeque<MetricsSnapshot>,
+    pub rates: MetricsRates,
+
+    // Control signals
+    pub start_requested: bool,
+    pub stop_requested: bool,
+}
+
+impl ClientRoleState {
+    pub fn new() -> Self {
+        Self {
+            origin: ServiceOrigin::NotDetected,
+            status: ServiceStatus::Unknown,
+            gpu_pool: Vec::new(),
+            remote_servers: Vec::new(),
+            interpose: InterposeStatus::default(),
+            metrics: None,
+            metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
+            rates: MetricsRates::default(),
+            start_requested: false,
+            stop_requested: false,
+        }
+    }
+
+    /// Push a metrics snapshot and compute rates.
+    pub fn push_metrics(&mut self, snapshot: MetricsSnapshot) {
+        if let Some(prev) = self.metrics_history.back() {
+            self.rates = compute_rates(prev, &snapshot);
+        }
+        if self.metrics_history.len() >= MAX_METRICS_HISTORY {
+            self.metrics_history.pop_front();
+        }
+        self.metrics = Some(snapshot.clone());
+        self.metrics_history.push_back(snapshot);
+    }
+
+    /// Clear all monitoring data (on daemon stop).
+    pub fn clear_monitoring(&mut self) {
+        self.gpu_pool.clear();
+        self.remote_servers.clear();
+        self.metrics = None;
+        self.metrics_history.clear();
+        self.rates = MetricsRates::default();
+    }
+}
+
+// ============================================================================
+// Config editor state (shared)
+// ============================================================================
 
 /// Editable configuration state for the config editor.
 #[derive(Debug, Clone)]
@@ -193,105 +301,66 @@ impl ConfigEditorState {
     }
 }
 
+// ============================================================================
+// Top-level UI state
+// ============================================================================
+
+/// Active tab in the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiTab {
+    Dashboard,
+    Server,
+    Client,
+    ConfigEditor,
+}
+
 /// State shared between the eframe UI thread and the background data-fetching thread.
 pub struct UiState {
-    pub servers: Vec<ServerState>,
-    pub config_path: String,
-    pub config_editor: Option<ConfigEditorState>,
     pub active_tab: UiTab,
+    pub config_path: String,
     pub poll_interval_secs: u64,
     pub error_log: VecDeque<String>,
     /// Signal the fetcher to stop
     pub should_stop: bool,
 
-    // --- Embedded server control ---
-    pub local_server_status: LocalServerStatus,
-    pub local_server_config: LocalServerConfig,
-    /// Set by UI to request server start; cleared by fetcher after processing.
-    pub server_start_requested: bool,
-    /// Set by UI to request server stop; cleared by fetcher after processing.
-    pub server_stop_requested: bool,
+    // Role states
+    pub server: ServerRoleState,
+    pub client: ClientRoleState,
 
-    // --- Dynamic connections ---
-    /// Pending connections to be established by the fetcher.
-    pub pending_connections: Vec<PendingConnection>,
-
-    // --- Connection form state ---
-    pub new_connection_address: String,
-    pub new_connection_token: String,
-
-    // --- Embedded server monitoring (direct, no TCP) ---
-    pub embedded_server_gpus: Vec<GpuInfo>,
-    pub embedded_server_metrics: Option<MetricsSnapshot>,
-    pub embedded_server_metrics_history: VecDeque<MetricsSnapshot>,
-    pub embedded_server_rates: MetricsRates,
+    // Config editor (shared, applies to both roles)
+    pub config_editor: Option<ConfigEditorState>,
 }
 
 impl UiState {
-    pub fn new(
-        servers: Vec<(String, String)>,
-        config_path: String,
-        poll_interval_secs: u64,
-    ) -> Self {
-        let server_states = servers
-            .into_iter()
-            .map(|(addr, token)| ServerState::new(addr, token))
-            .collect();
-
-        // Try to load config
+    pub fn new(config_path: String, poll_interval_secs: u64) -> Self {
+        // Try to load config for editor
         let config_editor = RgpuConfig::load(&config_path)
             .ok()
             .map(ConfigEditorState::from_config);
 
+        // Pre-populate server config from loaded config if available
+        let mut server = ServerRoleState::new();
+        if let Some(ref editor) = config_editor {
+            server.config.server_id = editor.config.server.server_id;
+            server.config.port = editor.config.server.port;
+            server.config.bind = editor.config.server.bind.clone();
+            server.config.transport = editor.config.server.transport.clone();
+            server.config.cert_path = editor.config.server.cert_path.clone().unwrap_or_default();
+            server.config.key_path = editor.config.server.key_path.clone().unwrap_or_default();
+            server.config.max_clients = editor.config.server.max_clients;
+            server.config.tokens = editor.config.security.tokens.clone();
+        }
+
         Self {
-            servers: server_states,
+            active_tab: UiTab::Dashboard,
             config_path,
-            config_editor,
-            active_tab: UiTab::Control,
             poll_interval_secs,
             error_log: VecDeque::with_capacity(MAX_ERROR_LOG),
             should_stop: false,
-            local_server_status: LocalServerStatus::Stopped,
-            local_server_config: LocalServerConfig::default(),
-            server_start_requested: false,
-            server_stop_requested: false,
-            pending_connections: Vec::new(),
-            new_connection_address: String::new(),
-            new_connection_token: String::new(),
-            embedded_server_gpus: Vec::new(),
-            embedded_server_metrics: None,
-            embedded_server_metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
-            embedded_server_rates: MetricsRates::default(),
+            server,
+            client: ClientRoleState::new(),
+            config_editor,
         }
-    }
-
-    /// Push a metrics snapshot for the embedded server, computing rates from previous.
-    pub fn push_embedded_metrics(&mut self, snapshot: MetricsSnapshot) {
-        if let Some(prev) = self.embedded_server_metrics_history.back() {
-            let dt = snapshot.timestamp.duration_since(prev.timestamp).as_secs_f64();
-            if dt > 0.0 {
-                self.embedded_server_rates = MetricsRates {
-                    requests_per_sec: (snapshot.requests_total.saturating_sub(prev.requests_total))
-                        as f64
-                        / dt,
-                    cuda_per_sec: (snapshot.cuda_commands.saturating_sub(prev.cuda_commands))
-                        as f64
-                        / dt,
-                    vulkan_per_sec: (snapshot.vulkan_commands.saturating_sub(prev.vulkan_commands))
-                        as f64
-                        / dt,
-                    errors_per_sec: (snapshot.errors_total.saturating_sub(prev.errors_total))
-                        as f64
-                        / dt,
-                };
-            }
-        }
-
-        if self.embedded_server_metrics_history.len() >= MAX_METRICS_HISTORY {
-            self.embedded_server_metrics_history.pop_front();
-        }
-        self.embedded_server_metrics = Some(snapshot.clone());
-        self.embedded_server_metrics_history.push_back(snapshot);
     }
 
     pub fn push_error(&mut self, msg: String) {
@@ -301,15 +370,8 @@ impl UiState {
         self.error_log.push_back(msg);
     }
 
+    /// Total GPU count across both roles.
     pub fn total_gpus(&self) -> usize {
-        let remote: usize = self.servers.iter().map(|s| s.gpus.len()).sum();
-        remote + self.embedded_server_gpus.len()
-    }
-
-    pub fn connected_servers(&self) -> usize {
-        self.servers
-            .iter()
-            .filter(|s| s.connection_state.is_connected())
-            .count()
+        self.server.served_gpus.len() + self.client.gpu_pool.len()
     }
 }

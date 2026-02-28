@@ -15,7 +15,30 @@ pub fn show(ui: &mut Ui, state: &mut UiState) {
             .small()
             .color(Color32::GRAY),
     );
-    ui.add_space(8.0);
+    ui.add_space(4.0);
+
+    // Restart banner when services are running
+    let server_running = state.server.status.is_running();
+    let client_running = state.client.status.is_running();
+    if server_running || client_running {
+        egui::Frame::new()
+            .fill(Color32::from_rgb(60, 50, 20))
+            .inner_margin(egui::Margin::same(8))
+            .corner_radius(egui::CornerRadius::same(4))
+            .show(ui, |ui| {
+                let mut parts = Vec::new();
+                if server_running { parts.push("server"); }
+                if client_running { parts.push("client"); }
+                ui.label(
+                    RichText::new(format!(
+                        "Restart {} to apply configuration changes.",
+                        parts.join(" and ")
+                    ))
+                    .color(Color32::from_rgb(255, 200, 50)),
+                );
+            });
+        ui.add_space(4.0);
+    }
 
     // Action buttons
     ui.horizontal(|ui| {

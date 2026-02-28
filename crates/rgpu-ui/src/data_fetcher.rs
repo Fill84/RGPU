@@ -1,26 +1,21 @@
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio::task::JoinHandle as TokioJoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use rgpu_core::config::ServerConfig;
-use rgpu_protocol::messages::{Message, PROTOCOL_VERSION};
-use rgpu_protocol::wire;
 
+use crate::service_control;
+use crate::service_detection;
 use crate::state::{
-    LocalServerStatus, MetricsSnapshot, ServerConnectionState, ServerState, UiState,
+    ClientRemoteServer, MetricsSnapshot, ServiceOrigin, ServiceStatus, UiState,
 };
 
-/// Spawns a background thread that periodically polls all configured servers
-/// for GPU info and metrics. Also manages the embedded server lifecycle.
-pub fn start_data_fetcher(
-    state: Arc<Mutex<UiState>>,
-    ctx: egui::Context,
-) -> JoinHandle<()> {
+/// Spawns a background thread that periodically probes server and client daemon,
+/// manages embedded server lifecycle, and updates shared UI state.
+pub fn start_data_fetcher(state: Arc<Mutex<UiState>>, ctx: egui::Context) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("rgpu-ui-fetcher".to_string())
         .spawn(move || {
@@ -37,121 +32,28 @@ pub fn start_data_fetcher(
         .expect("failed to spawn data fetcher thread")
 }
 
-/// Holds a live TCP connection to a single server.
-struct ServerConnection {
-    reader: tokio::io::ReadHalf<TcpStream>,
-    writer: tokio::io::WriteHalf<TcpStream>,
-}
+// ============================================================================
+// Embedded server state
+// ============================================================================
 
-impl ServerConnection {
-    /// Send a message and read the response.
-    async fn request(&mut self, msg: &Message) -> anyhow::Result<Message> {
-        let frame = wire::encode_message(msg, 0)?;
-        self.writer.write_all(&frame).await?;
-
-        let mut header_buf = [0u8; wire::HEADER_SIZE];
-        self.reader.read_exact(&mut header_buf).await?;
-        let (flags, _, payload_len) = wire::decode_header(&header_buf)?;
-        let mut payload = vec![0u8; payload_len as usize];
-        self.reader.read_exact(&mut payload).await?;
-        let response = wire::decode_message(&payload, flags)?;
-        Ok(response)
-    }
-}
-
-/// Connect to a server and perform Hello/Auth handshake.
-async fn connect_and_auth(
-    address: &str,
-    token: &str,
-) -> anyhow::Result<(ServerConnection, Option<u16>, Vec<rgpu_protocol::gpu_info::GpuInfo>)> {
-    let stream = TcpStream::connect(address).await?;
-    let (mut reader, mut writer) = tokio::io::split(stream);
-
-    // Send Hello
-    let hello = Message::Hello {
-        protocol_version: PROTOCOL_VERSION,
-        name: "RGPU UI".to_string(),
-        challenge: None,
-    };
-    let frame = wire::encode_message(&hello, 0)?;
-    writer.write_all(&frame).await?;
-
-    // Read server Hello with challenge
-    let mut header_buf = [0u8; wire::HEADER_SIZE];
-    reader.read_exact(&mut header_buf).await?;
-    let (flags, _, payload_len) = wire::decode_header(&header_buf)?;
-    let mut payload = vec![0u8; payload_len as usize];
-    reader.read_exact(&mut payload).await?;
-    let server_hello = wire::decode_message(&payload, flags)?;
-
-    let challenge = match &server_hello {
-        Message::Hello { challenge, .. } => challenge.clone().unwrap_or_default(),
-        _ => Vec::new(),
-    };
-
-    // Send Authenticate
-    let challenge_response =
-        rgpu_transport::auth::compute_challenge_response(token, &challenge);
-    let auth_msg = Message::Authenticate {
-        token: token.to_string(),
-        challenge_response,
-    };
-    let frame = wire::encode_message(&auth_msg, 0)?;
-    writer.write_all(&frame).await?;
-
-    // Read AuthResult
-    reader.read_exact(&mut header_buf).await?;
-    let (flags, _, payload_len) = wire::decode_header(&header_buf)?;
-    let mut payload = vec![0u8; payload_len as usize];
-    reader.read_exact(&mut payload).await?;
-    let auth_result = wire::decode_message(&payload, flags)?;
-
-    match auth_result {
-        Message::AuthResult {
-            success: true,
-            server_id,
-            available_gpus,
-            ..
-        } => {
-            let conn = ServerConnection { reader, writer };
-            Ok((conn, server_id, available_gpus))
-        }
-        Message::AuthResult {
-            success: false,
-            error_message,
-            ..
-        } => {
-            anyhow::bail!(
-                "authentication failed: {}",
-                error_message.unwrap_or_default()
-            );
-        }
-        _ => anyhow::bail!("unexpected response during authentication"),
-    }
-}
-
-/// State for the embedded server running inside the fetcher.
 struct EmbeddedServer {
     shutdown_tx: watch::Sender<bool>,
     task_handle: TokioJoinHandle<()>,
-    /// Direct reference to the server for monitoring without TCP.
     server_ref: Arc<rgpu_server::RgpuServer>,
 }
 
-/// Main fetcher loop: manages embedded server, dynamic connections, and polls periodically.
+// ============================================================================
+// Main fetcher loop
+// ============================================================================
+
 async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
     let poll_interval = {
         let st = state.lock().unwrap();
         st.poll_interval_secs
     };
 
-    // Per-server connections, kept in sync with state.servers
-    let mut connections: Vec<Option<ServerConnection>> = {
-        let st = state.lock().unwrap();
-        (0..st.servers.len()).map(|_| None).collect()
-    };
-
     let mut embedded_server: Option<EmbeddedServer> = None;
+    let mut interpose_check_counter: u64 = 0;
 
     loop {
         // Check if we should stop
@@ -162,163 +64,30 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
             }
         }
 
-        // --- Handle embedded server lifecycle ---
+        // 1. Handle server lifecycle (start/stop embedded or service)
         handle_server_lifecycle(&state, &ctx, &mut embedded_server).await;
 
-        // --- Handle dynamic connections ---
-        handle_pending_connections(&state, &mut connections);
-        handle_disconnect_requests(&state, &mut connections);
+        // 2. Handle client lifecycle (start/stop service or process)
+        handle_client_lifecycle(&state, &ctx).await;
 
-        // --- Poll embedded server directly (no TCP) ---
-        if let Some(ref srv) = embedded_server {
-            let metrics_ref = srv.server_ref.metrics();
-            let uptime = metrics_ref.start_time.elapsed().as_secs();
-            let snapshot = MetricsSnapshot {
-                timestamp: std::time::Instant::now(),
-                connections_total: metrics_ref.connections_total.load(std::sync::atomic::Ordering::Relaxed),
-                connections_active: metrics_ref.connections_active.load(std::sync::atomic::Ordering::Relaxed),
-                requests_total: metrics_ref.requests_total.load(std::sync::atomic::Ordering::Relaxed),
-                errors_total: metrics_ref.errors_total.load(std::sync::atomic::Ordering::Relaxed),
-                cuda_commands: metrics_ref.cuda_commands.load(std::sync::atomic::Ordering::Relaxed),
-                vulkan_commands: metrics_ref.vulkan_commands.load(std::sync::atomic::Ordering::Relaxed),
-                uptime_secs: uptime,
-            };
-            let gpu_infos = srv.server_ref.gpu_infos().to_vec();
+        // 3. Probe server (embedded → direct Arc, external → TCP probe)
+        probe_server(&state, &embedded_server).await;
 
-            let mut st = state.lock().unwrap();
-            st.embedded_server_gpus = gpu_infos;
-            st.push_embedded_metrics(snapshot);
+        // 4. Probe client daemon (IPC probe via spawn_blocking)
+        probe_client_daemon(&state).await;
+
+        // 5. Check interpose status (every 30s at 2s poll = every 15 iterations)
+        interpose_check_counter += 1;
+        let interpose_interval = 30 / poll_interval.max(1);
+        if interpose_check_counter >= interpose_interval {
+            interpose_check_counter = 0;
+            check_interpose(&state).await;
         }
 
-        // --- Poll all remote servers ---
-        let server_count = {
-            let st = state.lock().unwrap();
-            st.servers.len()
-        };
+        // 6. Detect service origins (Windows SCM) — only when status is Unknown
+        detect_service_origins(&state);
 
-        for i in 0..server_count {
-            // Get address and token for this server
-            let (address, token) = {
-                let st = state.lock().unwrap();
-                if i >= st.servers.len() {
-                    break; // servers list shrank
-                }
-                (st.servers[i].address.clone(), st.servers[i].token.clone())
-            };
-
-            // Try to (re)connect if needed
-            if i < connections.len() && connections[i].is_none() {
-                {
-                    let mut st = state.lock().unwrap();
-                    if i < st.servers.len() {
-                        st.servers[i].connection_state = ServerConnectionState::Connecting;
-                    }
-                }
-                ctx.request_repaint();
-
-                match connect_and_auth(&address, &token).await {
-                    Ok((conn, server_id, gpus)) => {
-                        if i < connections.len() {
-                            connections[i] = Some(conn);
-                        }
-                        let mut st = state.lock().unwrap();
-                        if i < st.servers.len() {
-                            st.servers[i].connection_state = ServerConnectionState::Connected;
-                            st.servers[i].server_id = server_id;
-                            st.servers[i].gpus = gpus;
-                        }
-                        debug!("connected to server {}", address);
-                    }
-                    Err(e) => {
-                        let mut st = state.lock().unwrap();
-                        if i < st.servers.len() {
-                            st.servers[i].connection_state =
-                                ServerConnectionState::Error(e.to_string());
-                            st.push_error(format!("connect {}: {}", address, e));
-                        }
-                        debug!("failed to connect to {}: {}", address, e);
-                    }
-                }
-                ctx.request_repaint();
-            }
-
-            // Poll connected servers
-            if i < connections.len() {
-                if let Some(conn) = &mut connections[i] {
-                    // Query GPUs
-                    match conn.request(&Message::QueryGpus).await {
-                        Ok(Message::GpuList(gpus)) => {
-                            let mut st = state.lock().unwrap();
-                            if i < st.servers.len() {
-                                st.servers[i].gpus = gpus;
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            connections[i] = None;
-                            let mut st = state.lock().unwrap();
-                            if i < st.servers.len() {
-                                st.servers[i].connection_state =
-                                    ServerConnectionState::Error(e.to_string());
-                                st.push_error(format!("query gpus {}: {}", address, e));
-                            }
-                            ctx.request_repaint();
-                            continue;
-                        }
-                    }
-
-                    // Query Metrics
-                    if let Some(conn) = &mut connections[i] {
-                        match conn.request(&Message::QueryMetrics).await {
-                            Ok(Message::MetricsData {
-                                connections_total,
-                                connections_active,
-                                requests_total,
-                                errors_total,
-                                cuda_commands,
-                                vulkan_commands,
-                                uptime_secs,
-                                server_id,
-                                ..
-                            }) => {
-                                let snapshot = MetricsSnapshot {
-                                    timestamp: std::time::Instant::now(),
-                                    connections_total,
-                                    connections_active,
-                                    requests_total,
-                                    errors_total,
-                                    cuda_commands,
-                                    vulkan_commands,
-                                    uptime_secs,
-                                };
-                                let mut st = state.lock().unwrap();
-                                if i < st.servers.len() {
-                                    st.servers[i].server_id = Some(server_id);
-                                    st.servers[i].push_metrics(snapshot);
-                                }
-                            }
-                            Ok(_) => {
-                                // Server doesn't support metrics (older version)
-                            }
-                            Err(e) => {
-                                connections[i] = None;
-                                let mut st = state.lock().unwrap();
-                                if i < st.servers.len() {
-                                    st.servers[i].connection_state =
-                                        ServerConnectionState::Error(e.to_string());
-                                    st.push_error(format!("query metrics {}: {}", address, e));
-                                }
-                                ctx.request_repaint();
-                                continue;
-                            }
-                        }
-                    }
-
-                    ctx.request_repaint();
-                }
-            }
-        }
-
+        ctx.request_repaint();
         tokio::time::sleep(std::time::Duration::from_secs(poll_interval)).await;
     }
 
@@ -327,36 +96,36 @@ async fn fetcher_loop(state: Arc<Mutex<UiState>>, ctx: egui::Context) {
         let _ = srv.shutdown_tx.send(true);
         let _ = srv.task_handle.await;
         let mut st = state.lock().unwrap();
-        st.embedded_server_gpus.clear();
-        st.embedded_server_metrics = None;
-        st.embedded_server_metrics_history.clear();
-        st.embedded_server_rates = crate::state::MetricsRates::default();
+        st.server.clear_monitoring();
+        st.server.status = ServiceStatus::Stopped;
     }
 }
 
-/// Handle embedded server start/stop requests.
+// ============================================================================
+// Server lifecycle (embedded start/stop)
+// ============================================================================
+
 async fn handle_server_lifecycle(
     state: &Arc<Mutex<UiState>>,
     ctx: &egui::Context,
     embedded_server: &mut Option<EmbeddedServer>,
 ) {
     let (start_requested, stop_requested) = {
-        let st = state.lock().unwrap();
-        (st.server_start_requested, st.server_stop_requested)
+        let mut st = state.lock().unwrap();
+        let start = st.server.start_requested;
+        let stop = st.server.stop_requested;
+        st.server.start_requested = false;
+        st.server.stop_requested = false;
+        (start, stop)
     };
 
     // Handle start request
     if start_requested {
-        {
-            let mut st = state.lock().unwrap();
-            st.server_start_requested = false;
-        }
-
         // Build server config from UI state
-        let (server_config, tokens, address) = {
+        let server_config = {
             let st = state.lock().unwrap();
-            let cfg = &st.local_server_config;
-            let server_config = ServerConfig {
+            let cfg = &st.server.config;
+            ServerConfig {
                 server_id: cfg.server_id,
                 port: cfg.port,
                 bind: cfg.bind.clone(),
@@ -373,116 +142,419 @@ async fn handle_server_lifecycle(
                 },
                 expose_gpus: None,
                 max_clients: cfg.max_clients,
-            };
-            let tokens = cfg.tokens.clone();
-            let address = format!("127.0.0.1:{}", cfg.port);
-            (server_config, tokens, address)
+            }
+        };
+        let tokens = {
+            let st = state.lock().unwrap();
+            st.server.config.tokens.clone()
         };
 
-        // Create shutdown channel
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        // Try Windows Service first, then embedded
+        let started_via_scm = try_start_server_service();
 
-        // Spawn the server (wrapped in Arc for direct monitoring)
-        let server = Arc::new(rgpu_server::RgpuServer::new(server_config, tokens));
-        let server_for_task = server.clone();
-        let task_handle = tokio::spawn(async move {
-            if let Err(e) = server_for_task.run_with_shutdown(shutdown_rx).await {
-                error!("embedded server error: {}", e);
-            }
-        });
-
-        info!("embedded server starting on {}", address);
-
-        // Set status to running and populate initial GPU info directly (no TCP self-connect)
-        {
-            let gpu_infos = server.gpu_infos().to_vec();
+        if started_via_scm {
             let mut st = state.lock().unwrap();
-            st.local_server_status = LocalServerStatus::Running;
-            st.embedded_server_gpus = gpu_infos;
-            st.embedded_server_metrics = None;
+            st.server.origin = ServiceOrigin::WindowsService;
+            st.server.status = ServiceStatus::Starting;
+        } else {
+            // Start embedded server
+            let (shutdown_tx, shutdown_rx) = watch::channel(false);
+            let server = Arc::new(rgpu_server::RgpuServer::new(server_config, tokens));
+            let server_for_task = server.clone();
+            let task_handle = tokio::spawn(async move {
+                if let Err(e) = server_for_task.run_with_shutdown(shutdown_rx).await {
+                    error!("embedded server error: {}", e);
+                }
+            });
+
+            info!("embedded server starting");
+
+            {
+                let gpu_infos = server.gpu_infos().to_vec();
+                let mut st = state.lock().unwrap();
+                st.server.origin = ServiceOrigin::Embedded;
+                st.server.status = ServiceStatus::Running;
+                st.server.served_gpus = gpu_infos;
+            }
+
+            *embedded_server = Some(EmbeddedServer {
+                shutdown_tx,
+                task_handle,
+                server_ref: server,
+            });
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-
-        *embedded_server = Some(EmbeddedServer {
-            shutdown_tx,
-            task_handle,
-            server_ref: server,
-        });
-
-        // Short delay to let the server start before we try to connect
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         ctx.request_repaint();
     }
 
     // Handle stop request
     if stop_requested {
-        {
-            let mut st = state.lock().unwrap();
-            st.server_stop_requested = false;
+        let origin = {
+            let st = state.lock().unwrap();
+            st.server.origin.clone()
+        };
+
+        match origin {
+            ServiceOrigin::Embedded => {
+                if let Some(srv) = embedded_server.take() {
+                    info!("stopping embedded server");
+                    let _ = srv.shutdown_tx.send(true);
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        srv.task_handle,
+                    )
+                    .await;
+                }
+            }
+            ServiceOrigin::WindowsService => {
+                if let Err(e) = service_control::scm::stop_service("RGPU Server") {
+                    warn!("failed to stop RGPU Server service: {}", e);
+                }
+            }
+            _ => {}
         }
 
-        if let Some(srv) = embedded_server.take() {
-            info!("stopping embedded server");
-            let _ = srv.shutdown_tx.send(true);
-
-            // Wait for the server task to complete (with timeout)
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(15),
-                srv.task_handle,
-            )
-            .await;
-
-            // Clear embedded server monitoring data
-            let mut st = state.lock().unwrap();
-            st.embedded_server_gpus.clear();
-            st.embedded_server_metrics = None;
-            st.embedded_server_metrics_history.clear();
-            st.embedded_server_rates = crate::state::MetricsRates::default();
-            st.local_server_status = LocalServerStatus::Stopped;
-        }
+        let mut st = state.lock().unwrap();
+        st.server.clear_monitoring();
+        st.server.status = ServiceStatus::Stopped;
+        st.server.origin = ServiceOrigin::NotDetected;
         ctx.request_repaint();
     }
 }
 
-/// Process pending connection requests from the UI.
-fn handle_pending_connections(
+// ============================================================================
+// Client lifecycle (service/process start/stop)
+// ============================================================================
+
+async fn handle_client_lifecycle(
     state: &Arc<Mutex<UiState>>,
-    connections: &mut Vec<Option<ServerConnection>>,
+    ctx: &egui::Context,
 ) {
-    let pending = {
+    let (start_requested, stop_requested) = {
         let mut st = state.lock().unwrap();
-        std::mem::take(&mut st.pending_connections)
+        let start = st.client.start_requested;
+        let stop = st.client.stop_requested;
+        st.client.start_requested = false;
+        st.client.stop_requested = false;
+        (start, stop)
     };
 
-    if !pending.is_empty() {
+    if start_requested {
+        // Try Windows Service first
+        let started_via_scm = try_start_client_service();
+
+        if started_via_scm {
+            let mut st = state.lock().unwrap();
+            st.client.origin = ServiceOrigin::WindowsService;
+            st.client.status = ServiceStatus::Starting;
+        } else {
+            // Spawn client process
+            let config_path = {
+                let st = state.lock().unwrap();
+                st.config_path.clone()
+            };
+
+            match service_control::spawn_client_process(&config_path) {
+                Ok(_child) => {
+                    let mut st = state.lock().unwrap();
+                    st.client.origin = ServiceOrigin::ExternalProcess;
+                    st.client.status = ServiceStatus::Starting;
+                    info!("spawned client daemon process");
+                }
+                Err(e) => {
+                    let mut st = state.lock().unwrap();
+                    st.client.status = ServiceStatus::Error(format!("spawn failed: {}", e));
+                    st.push_error(format!("failed to start client: {}", e));
+                }
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    if stop_requested {
+        let origin = {
+            let st = state.lock().unwrap();
+            st.client.origin.clone()
+        };
+
+        match origin {
+            ServiceOrigin::WindowsService => {
+                if let Err(e) = service_control::scm::stop_service("RGPU Client") {
+                    warn!("failed to stop RGPU Client service: {}", e);
+                }
+            }
+            _ => {
+                // For external processes, we rely on IPC disconnect / signal
+                // The daemon itself handles SIGTERM/SIGINT
+            }
+        }
+
         let mut st = state.lock().unwrap();
-        for pc in pending {
-            st.servers
-                .push(ServerState::new(pc.address, pc.token));
-            connections.push(None);
+        st.client.clear_monitoring();
+        st.client.status = ServiceStatus::Stopped;
+        st.client.origin = ServiceOrigin::NotDetected;
+        ctx.request_repaint();
+    }
+}
+
+// ============================================================================
+// Server probing
+// ============================================================================
+
+async fn probe_server(
+    state: &Arc<Mutex<UiState>>,
+    embedded_server: &Option<EmbeddedServer>,
+) {
+    // If embedded, poll directly via Arc
+    if let Some(ref srv) = embedded_server {
+        let metrics_ref = srv.server_ref.metrics();
+        let uptime = metrics_ref.start_time.elapsed().as_secs();
+        let snapshot = MetricsSnapshot {
+            timestamp: std::time::Instant::now(),
+            connections_total: metrics_ref
+                .connections_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            connections_active: metrics_ref
+                .connections_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+            requests_total: metrics_ref
+                .requests_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            errors_total: metrics_ref
+                .errors_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            cuda_commands: metrics_ref
+                .cuda_commands
+                .load(std::sync::atomic::Ordering::Relaxed),
+            vulkan_commands: metrics_ref
+                .vulkan_commands
+                .load(std::sync::atomic::Ordering::Relaxed),
+            uptime_secs: uptime,
+        };
+        let gpu_infos = srv.server_ref.gpu_infos().to_vec();
+
+        let mut st = state.lock().unwrap();
+        st.server.served_gpus = gpu_infos;
+        st.server.push_metrics(snapshot);
+        st.server.status = ServiceStatus::Running;
+        return;
+    }
+
+    // External server: probe via TCP (blocking, run in spawn_blocking)
+    let (port, token) = {
+        let st = state.lock().unwrap();
+        let port = st.server.config.port;
+        // Get the first token for authentication
+        let token = st
+            .server
+            .config
+            .tokens
+            .first()
+            .map(|t| t.token.clone())
+            .or_else(|| {
+                st.config_editor
+                    .as_ref()
+                    .and_then(|e| e.config.security.tokens.first().map(|t| t.token.clone()))
+            })
+            .unwrap_or_default();
+        (port, token)
+    };
+
+    if token.is_empty() {
+        // No token configured, can't probe
+        return;
+    }
+
+    let result =
+        tokio::task::spawn_blocking(move || service_detection::probe_server_tcp(port, &token))
+            .await;
+
+    match result {
+        Ok(Ok(probe)) => {
+            let mut st = state.lock().unwrap();
+            st.server.served_gpus = probe.gpus;
+            if st.server.origin == ServiceOrigin::NotDetected {
+                st.server.origin = ServiceOrigin::ExternalProcess;
+            }
+            st.server.status = ServiceStatus::Running;
+
+            if let Some(m) = probe.metrics {
+                let snapshot = MetricsSnapshot {
+                    timestamp: std::time::Instant::now(),
+                    connections_total: m.connections_total,
+                    connections_active: m.connections_active,
+                    requests_total: m.requests_total,
+                    errors_total: m.errors_total,
+                    cuda_commands: m.cuda_commands,
+                    vulkan_commands: m.vulkan_commands,
+                    uptime_secs: m.uptime_secs,
+                };
+                st.server.push_metrics(snapshot);
+            }
+        }
+        Ok(Err(_)) => {
+            // Server not reachable
+            let mut st = state.lock().unwrap();
+            if st.server.origin != ServiceOrigin::Embedded {
+                // Only mark as stopped if we're not embedded
+                if st.server.status.is_running() {
+                    // Was running, now gone
+                    st.server.clear_monitoring();
+                    st.server.origin = ServiceOrigin::NotDetected;
+                }
+                st.server.status = ServiceStatus::Stopped;
+            }
+        }
+        Err(e) => {
+            debug!("server probe task failed: {}", e);
         }
     }
 }
 
-/// Process disconnect requests from the UI.
-fn handle_disconnect_requests(
-    state: &Arc<Mutex<UiState>>,
-    connections: &mut Vec<Option<ServerConnection>>,
-) {
+// ============================================================================
+// Client daemon IPC probing
+// ============================================================================
+
+async fn probe_client_daemon(state: &Arc<Mutex<UiState>>) {
+    let result =
+        tokio::task::spawn_blocking(|| service_detection::probe_client_ipc()).await;
+
+    match result {
+        Ok(Ok(gpus)) => {
+            let mut st = state.lock().unwrap();
+            if st.client.origin == ServiceOrigin::NotDetected {
+                st.client.origin = ServiceOrigin::ExternalProcess;
+            }
+            st.client.status = ServiceStatus::Running;
+
+            // Derive remote servers from GPU pool
+            let mut servers: Vec<ClientRemoteServer> = Vec::new();
+            for gpu in &gpus {
+                if gpu.server_id != 0 {
+                    if let Some(existing) = servers.iter_mut().find(|s| s.server_id == Some(gpu.server_id)) {
+                        existing.gpu_count += 1;
+                    } else {
+                        servers.push(ClientRemoteServer {
+                            address: format!("server-{}", gpu.server_id),
+                            server_id: Some(gpu.server_id),
+                            connected: true,
+                            gpu_count: 1,
+                        });
+                    }
+                }
+            }
+            st.client.remote_servers = servers;
+            st.client.gpu_pool = gpus;
+        }
+        Ok(Err(_)) => {
+            // Client daemon not reachable
+            let mut st = state.lock().unwrap();
+            if st.client.status.is_running() && st.client.origin != ServiceOrigin::Embedded {
+                st.client.clear_monitoring();
+                st.client.origin = ServiceOrigin::NotDetected;
+            }
+            st.client.status = ServiceStatus::Stopped;
+        }
+        Err(e) => {
+            debug!("client IPC probe task failed: {}", e);
+        }
+    }
+}
+
+// ============================================================================
+// Interpose status checking
+// ============================================================================
+
+async fn check_interpose(state: &Arc<Mutex<UiState>>) {
+    let result =
+        tokio::task::spawn_blocking(|| service_detection::check_interpose_status()).await;
+
+    if let Ok(status) = result {
+        let mut st = state.lock().unwrap();
+        st.client.interpose = status;
+    }
+}
+
+// ============================================================================
+// Windows SCM detection
+// ============================================================================
+
+fn detect_service_origins(state: &Arc<Mutex<UiState>>) {
     let mut st = state.lock().unwrap();
 
-    // Collect indices to disconnect (in reverse order to preserve indices)
-    let mut to_remove: Vec<usize> = Vec::new();
-    for (i, server) in st.servers.iter().enumerate() {
-        if server.should_disconnect {
-            to_remove.push(i);
+    // Only detect if not already known
+    if st.server.origin == ServiceOrigin::NotDetected {
+        if let Some(scm_status) = service_control::scm::query_service_status("RGPU Server") {
+            match scm_status {
+                service_control::scm::ServiceState::Running => {
+                    st.server.origin = ServiceOrigin::WindowsService;
+                    // Status will be set by probe
+                }
+                service_control::scm::ServiceState::StartPending => {
+                    st.server.origin = ServiceOrigin::WindowsService;
+                    st.server.status = ServiceStatus::Starting;
+                }
+                service_control::scm::ServiceState::StopPending => {
+                    st.server.origin = ServiceOrigin::WindowsService;
+                    st.server.status = ServiceStatus::Stopping;
+                }
+                _ => {}
+            }
         }
     }
 
-    // Remove in reverse order
-    for &idx in to_remove.iter().rev() {
-        if idx < connections.len() {
-            connections.remove(idx);
+    if st.client.origin == ServiceOrigin::NotDetected {
+        if let Some(scm_status) = service_control::scm::query_service_status("RGPU Client") {
+            match scm_status {
+                service_control::scm::ServiceState::Running => {
+                    st.client.origin = ServiceOrigin::WindowsService;
+                    // Status will be set by probe
+                }
+                service_control::scm::ServiceState::StartPending => {
+                    st.client.origin = ServiceOrigin::WindowsService;
+                    st.client.status = ServiceStatus::Starting;
+                }
+                service_control::scm::ServiceState::StopPending => {
+                    st.client.origin = ServiceOrigin::WindowsService;
+                    st.client.status = ServiceStatus::Stopping;
+                }
+                _ => {}
+            }
         }
-        st.servers.remove(idx);
     }
+}
+
+// ============================================================================
+// SCM helpers
+// ============================================================================
+
+fn try_start_server_service() -> bool {
+    if service_control::scm::is_service_installed("RGPU Server") {
+        match service_control::scm::start_service("RGPU Server") {
+            Ok(()) => {
+                info!("started RGPU Server via Windows SCM");
+                return true;
+            }
+            Err(e) => {
+                warn!("SCM start RGPU Server failed: {}", e);
+            }
+        }
+    }
+    false
+}
+
+fn try_start_client_service() -> bool {
+    if service_control::scm::is_service_installed("RGPU Client") {
+        match service_control::scm::start_service("RGPU Client") {
+            Ok(()) => {
+                info!("started RGPU Client via Windows SCM");
+                return true;
+            }
+            Err(e) => {
+                warn!("SCM start RGPU Client failed: {}", e);
+            }
+        }
+    }
+    false
 }
