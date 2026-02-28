@@ -1,28 +1,27 @@
-# RGPU Windows Installer Build Script
+# RGPU Windows MSI Installer Build Script (WiX v4)
 #
 # Usage:
-#   .\build-windows.ps1
-#   .\build-windows.ps1 -Version 0.2.0
-#   .\build-windows.ps1 -SkipBuild
+#   .\build-msi.ps1
+#   .\build-msi.ps1 -Version 0.2.0
+#   .\build-msi.ps1 -SkipBuild
 #
 # Prerequisites:
 #   - Rust toolchain (rustup)
-#   - NSIS 3.x (winget install NSIS.NSIS)
-#   - NSIS 3.x installed (winget install NSIS.NSIS or choco install nsis)
+#   - .NET 8.0+ SDK
+#   - WiX v4 CLI: dotnet tool install --global wix
+#   - WiX extensions: wix extension add WixToolset.UI.wixext WixToolset.Util.wixext
 
 param(
     [string]$Version = "0.1.0",
-    [string]$NsisPath = "",
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
 
-# Find project root (two levels up from this script)
 $ScriptDir = Split-Path -Parent $PSCommandPath
-$ProjectRoot = (Resolve-Path "$ScriptDir\..\..").Path
+$ProjectRoot = (Resolve-Path "$ScriptDir\..\..\..").Path
 
-Write-Host "=== RGPU Windows Installer Build ===" -ForegroundColor Cyan
+Write-Host "=== RGPU Windows MSI Build (WiX v4) ===" -ForegroundColor Cyan
 Write-Host "Version: $Version"
 Write-Host "Project: $ProjectRoot"
 Write-Host ""
@@ -63,9 +62,9 @@ foreach ($artifact in $Artifacts) {
     Write-Host ("  Found: {0} ({1:N1} MB)" -f (Split-Path -Leaf $artifact), $size) -ForegroundColor Green
 }
 
-# Step 3: Stage files for NSIS
+# Step 3: Stage files
 Write-Host "[3/4] Staging files..." -ForegroundColor Yellow
-$StagingDir = "$ScriptDir\nsis\staging"
+$StagingDir = "$ScriptDir\staging"
 if (Test-Path $StagingDir) {
     Remove-Item -Recurse -Force $StagingDir
 }
@@ -81,51 +80,40 @@ Copy-Item "$ProjectRoot\icon.ico" "$StagingDir\"
 
 Write-Host "  Staged to: $StagingDir" -ForegroundColor Green
 
-# Step 4: Find and run NSIS
-Write-Host "[4/4] Building NSIS installer..." -ForegroundColor Yellow
+# Step 4: Build MSI
+Write-Host "[4/4] Building MSI installer..." -ForegroundColor Yellow
 
-if ($NsisPath -eq "") {
-    # Try common locations
-    $NsisCandidates = @(
-        "C:\Program Files (x86)\NSIS\makensis.exe",
-        "C:\Program Files\NSIS\makensis.exe",
-        "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
-        "${env:ProgramFiles}\NSIS\makensis.exe"
-    )
-    foreach ($candidate in $NsisCandidates) {
-        if (Test-Path $candidate) {
-            $NsisPath = $candidate
-            break
-        }
-    }
-    # Try PATH
-    if ($NsisPath -eq "") {
-        $NsisPath = (Get-Command makensis -ErrorAction SilentlyContinue).Source
-    }
-}
-
-if ($NsisPath -eq "" -or -not (Test-Path $NsisPath)) {
-    Write-Host "  ERROR: NSIS not found. Install with: winget install NSIS.NSIS" -ForegroundColor Red
-    Write-Host "  Or specify path: .\build-windows.ps1 -NsisPath 'C:\path\to\makensis.exe'" -ForegroundColor Red
+$WixPath = (Get-Command wix -ErrorAction SilentlyContinue).Source
+if (-not $WixPath) {
+    Write-Host "  ERROR: WiX CLI not found." -ForegroundColor Red
+    Write-Host "  Install with: dotnet tool install --global wix" -ForegroundColor Red
+    Write-Host "  Then run:     wix extension add WixToolset.UI.wixext WixToolset.Util.wixext" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "  Using NSIS: $NsisPath" -ForegroundColor Gray
+Write-Host "  Using WiX: $WixPath" -ForegroundColor Gray
 
-& $NsisPath /DVERSION=$Version "$ScriptDir\nsis\rgpu-installer.nsi"
+$OutputMsi = "$ScriptDir\rgpu-${Version}-windows-x64.msi"
+
+wix build `
+    -d VERSION=$Version `
+    -arch x64 `
+    -ext WixToolset.UI.wixext `
+    -ext WixToolset.Util.wixext `
+    -o $OutputMsi `
+    "$ScriptDir\rgpu.wxs"
+
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERROR: NSIS build failed" -ForegroundColor Red
+    Write-Host "  ERROR: WiX build failed" -ForegroundColor Red
     exit 1
 }
 
 # Verify output
-$InstallerPath = "$ScriptDir\nsis\rgpu-${Version}-windows-x64-setup.exe"
-if (Test-Path $InstallerPath) {
-    $size = (Get-Item $InstallerPath).Length / 1MB
+if (Test-Path $OutputMsi) {
+    $size = (Get-Item $OutputMsi).Length / 1MB
     Write-Host ""
     Write-Host "=== Build Complete ===" -ForegroundColor Cyan
-    Write-Host ("  Installer: {0} ({1:N1} MB)" -f $InstallerPath, $size) -ForegroundColor Green
+    Write-Host ("  MSI Installer: {0} ({1:N1} MB)" -f $OutputMsi, $size) -ForegroundColor Green
 } else {
-    Write-Host "  WARNING: Expected output not found at $InstallerPath" -ForegroundColor Yellow
-    Write-Host "  Check NSIS output directory." -ForegroundColor Yellow
+    Write-Host "  WARNING: Expected output not found at $OutputMsi" -ForegroundColor Yellow
 }

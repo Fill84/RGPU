@@ -69,11 +69,44 @@ jobs:
         run: |
           & "C:\Program Files (x86)\NSIS\makensis.exe" /DVERSION=${{ steps.version.outputs.VERSION }} packaging\windows\nsis\rgpu-installer.nsi
 
-      - name: Upload Windows installer
+      # ─── MSI Installer (WiX v4) ──────────────────
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install WiX v4
+        run: dotnet tool install --global wix
+
+      - name: Install WiX extensions
+        run: |
+          wix extension add WixToolset.UI.wixext
+          wix extension add WixToolset.Util.wixext
+
+      - name: Stage build artifacts for MSI
+        shell: powershell
+        run: |
+          $staging = "packaging\windows\msi\staging"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target\release\rgpu.exe" "$staging\"
+          Copy-Item "target\release\rgpu_cuda_interpose.dll" "$staging\"
+          Copy-Item "target\release\rgpu_nvenc_interpose.dll" "$staging\"
+          Copy-Item "target\release\rgpu_nvdec_interpose.dll" "$staging\"
+          Copy-Item "target\release\rgpu_vk_icd.dll" "$staging\"
+          Copy-Item "packaging\config\rgpu.toml.template" "$staging\"
+          Copy-Item "icon.ico" "$staging\"
+
+      - name: Build MSI installer
+        run: |
+          wix build -d VERSION=${{ steps.version.outputs.VERSION }} -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -o packaging/windows/msi/rgpu-${{ steps.version.outputs.VERSION }}-windows-x64.msi packaging/windows/msi/rgpu.wxs
+
+      - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
           name: rgpu-windows-x64
-          path: packaging/windows/nsis/rgpu-*-setup.exe
+          path: |
+            packaging/windows/nsis/rgpu-*-setup.exe
+            packaging/windows/msi/rgpu-*.msi
 
   # ─── Linux Packages (.deb + .rpm) ──────────────
   build-linux:
@@ -209,6 +242,7 @@ jobs:
         with:
           files: |
             artifacts/**/*.exe
+            artifacts/**/*.msi
             artifacts/**/*.deb
             artifacts/**/*.rpm
             artifacts/**/*.pkg
