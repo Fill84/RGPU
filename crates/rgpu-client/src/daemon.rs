@@ -743,6 +743,7 @@ fn extract_nvenc_routing_handle(cmd: &NvencCommand) -> Option<NetworkHandle> {
         | NvencCommand::GetEncodePresetCount { encoder, .. }
         | NvencCommand::GetEncodePresetGUIDs { encoder, .. }
         | NvencCommand::GetEncodePresetConfig { encoder, .. }
+        | NvencCommand::GetEncodePresetConfigEx { encoder, .. }
         | NvencCommand::GetEncodeCaps { encoder, .. }
         | NvencCommand::GetInputFormatCount { encoder, .. }
         | NvencCommand::GetInputFormats { encoder, .. }

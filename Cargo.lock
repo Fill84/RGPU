@@ -2717,6 +2717,7 @@ name = "rgpu-nvdec-interpose"
 version = "0.1.0"
 dependencies = [
  "dashmap",
+ "libloading",
  "parking_lot",
  "rgpu-common",
  "rgpu-core",
@@ -2730,6 +2731,7 @@ name = "rgpu-nvenc-interpose"
 version = "0.1.0"
 dependencies = [
  "dashmap",
+ "libloading",
  "parking_lot",
  "rgpu-common",
  "rgpu-core",

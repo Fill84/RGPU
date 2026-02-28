@@ -19,12 +19,82 @@ pub mod handle_store;
 use std::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 
-use tracing::error;
+use tracing::{debug, error};
 
-use rgpu_protocol::handle::NetworkHandle;
+use rgpu_protocol::handle::{NetworkHandle, ResourceType};
 use rgpu_protocol::nvenc_commands::{NvGuid, NvencCommand, NvencResponse};
 
 use ipc_client::NvencIpcClient;
+
+// ── Cross-DLL CUDA handle resolution ───────────────────────────────────
+// The CUDA interpose (nvcuda.dll) exports rgpu_cuda_resolve_ctx/mem functions
+// that let us look up NetworkHandles for CUDA local IDs.
+
+type CudaResolveFn = unsafe extern "C" fn(u64, *mut u16, *mut u32, *mut u64) -> c_int;
+
+static CUDA_RESOLVE_CTX: OnceLock<Option<CudaResolveFn>> = OnceLock::new();
+static CUDA_RESOLVE_MEM: OnceLock<Option<CudaResolveFn>> = OnceLock::new();
+
+fn load_cuda_resolve_fn(name: &[u8]) -> Option<CudaResolveFn> {
+    unsafe {
+        #[cfg(target_os = "windows")]
+        let lib_name = "nvcuda.dll";
+        #[cfg(not(target_os = "windows"))]
+        let lib_name = "libcuda.so.1";
+
+        // Use RTLD_NOLOAD equivalent - the CUDA interpose should already be loaded
+        let lib = libloading::Library::new(lib_name).ok()?;
+        let sym: libloading::Symbol<CudaResolveFn> = lib.get(name).ok()?;
+        let func = *sym;
+        // Leak the library to keep it loaded
+        std::mem::forget(lib);
+        Some(func)
+    }
+}
+
+fn resolve_cuda_ctx_handle(local_id: u64) -> Option<NetworkHandle> {
+    let func = CUDA_RESOLVE_CTX.get_or_init(|| load_cuda_resolve_fn(b"rgpu_cuda_resolve_ctx"));
+    if let Some(func) = func {
+        let mut server_id: u16 = 0;
+        let mut session_id: u32 = 0;
+        let mut resource_id: u64 = 0;
+        let result = unsafe { func(local_id, &mut server_id, &mut session_id, &mut resource_id) };
+        if result != 0 {
+            Some(NetworkHandle {
+                server_id,
+                session_id,
+                resource_id,
+                resource_type: ResourceType::CuContext,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn resolve_cuda_mem_handle(local_id: u64) -> Option<NetworkHandle> {
+    let func = CUDA_RESOLVE_MEM.get_or_init(|| load_cuda_resolve_fn(b"rgpu_cuda_resolve_mem"));
+    if let Some(func) = func {
+        let mut server_id: u16 = 0;
+        let mut session_id: u32 = 0;
+        let mut resource_id: u64 = 0;
+        let result = unsafe { func(local_id, &mut server_id, &mut session_id, &mut resource_id) };
+        if result != 0 {
+            Some(NetworkHandle {
+                server_id,
+                session_id,
+                resource_id,
+                resource_type: ResourceType::CuDevicePtr,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
 
 // ── NVENC types ────────────────────────────────────────────────────────
 
@@ -34,6 +104,7 @@ type NV_ENC_OUTPUT_PTR = *mut c_void;
 type NV_ENC_REGISTERED_PTR = *mut c_void;
 
 const NV_ENC_SUCCESS: NVENCSTATUS = 0;
+const NV_ENC_ERR_INVALID_DEVICE: NVENCSTATUS = 4;
 const NV_ENC_ERR_INVALID_PTR: NVENCSTATUS = 6;
 const NV_ENC_ERR_INVALID_PARAM: NVENCSTATUS = 8;
 const NV_ENC_ERR_GENERIC: NVENCSTATUS = 20;
@@ -118,9 +189,9 @@ struct NvEncCreateInputBufferParams {
 #[repr(C)]
 struct NvEncCreateBitstreamBufferParams {
     version: u32,
-    reserved: u32,
-    bitstream_buffer: NV_ENC_OUTPUT_PTR,
-    reserved_mem_buf: *mut c_void,
+    encoder_buffer: u32,                // deprecated
+    reserved_pad: *mut c_void,          // padding (driver skips this, writes at offset 16)
+    bitstream_buffer: NV_ENC_OUTPUT_PTR, // OUT: actual pointer at offset 16
     reserved_size: u32,
     reserved1: [u32; 57],
     reserved2: [*mut c_void; 63],
@@ -229,7 +300,12 @@ struct NvEncSequenceParamPayload {
 // ── NV_ENCODE_API_FUNCTION_LIST (the vtable) ───────────────────────────
 
 /// The NVENC function table that applications receive from NvEncodeAPICreateInstance.
-/// This matches the NV_ENCODE_API_FUNCTION_LIST layout from nvEncodeAPI.h.
+/// This matches the NV_ENCODE_API_FUNCTION_LIST layout from nvEncodeAPI.h (SDK 12.x/13.0).
+///
+/// CRITICAL: The field order MUST match the SDK header exactly. The SDK order is:
+///   nvEncOpenEncodeSession, nvEncGetEncodeGUIDCount, nvEncGetEncodeProfileGUIDCount,
+///   nvEncGetEncodeProfileGUIDs, nvEncGetEncodeGUIDs, nvEncGetInputFormatCount, ...
+/// Note: ProfileGUID functions come BEFORE GetEncodeGUIDs in the SDK layout!
 #[repr(C)]
 pub struct NvEncApiFunctionList {
     version: u32,
@@ -238,12 +314,12 @@ pub struct NvEncApiFunctionList {
     nv_enc_open_encode_session: Option<unsafe extern "C" fn(*mut c_void, u32, *mut *mut c_void) -> NVENCSTATUS>,
     // [1]  nvEncGetEncodeGUIDCount
     nv_enc_get_encode_guid_count: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> NVENCSTATUS>,
-    // [2]  nvEncGetEncodeGUIDs
-    nv_enc_get_encode_guids: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncGuid, u32, *mut u32) -> NVENCSTATUS>,
-    // [3]  nvEncGetEncodeProfileGUIDCount
+    // [2]  nvEncGetEncodeProfileGUIDCount
     nv_enc_get_encode_profile_guid_count: Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut u32) -> NVENCSTATUS>,
-    // [4]  nvEncGetEncodeProfileGUIDs
+    // [3]  nvEncGetEncodeProfileGUIDs
     nv_enc_get_encode_profile_guids: Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut NvEncGuid, u32, *mut u32) -> NVENCSTATUS>,
+    // [4]  nvEncGetEncodeGUIDs
+    nv_enc_get_encode_guids: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncGuid, u32, *mut u32) -> NVENCSTATUS>,
     // [5]  nvEncGetInputFormatCount
     nv_enc_get_input_format_count: Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, *mut u32) -> NVENCSTATUS>,
     // [6]  nvEncGetInputFormats
@@ -302,8 +378,20 @@ pub struct NvEncApiFunctionList {
     nv_enc_reconfigure_encoder: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NVENCSTATUS>,
     // [33] reserved1
     reserved1: *mut c_void,
-    // [34] nvEncGetEncodePresetConfigEx
+    // [34] nvEncCreateMVBuffer
+    nv_enc_create_mv_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NVENCSTATUS>,
+    // [35] nvEncDestroyMVBuffer
+    nv_enc_destroy_mv_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NVENCSTATUS>,
+    // [36] nvEncRunMotionEstimationOnly
+    nv_enc_run_motion_estimation_only: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NVENCSTATUS>,
+    // [37] nvEncGetLastErrorString
+    nv_enc_get_last_error_string: Option<unsafe extern "C" fn(*mut c_void) -> *const u8>,
+    // [38] nvEncSetIOCudaStreams
+    nv_enc_set_io_cuda_streams: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> NVENCSTATUS>,
+    // [39] nvEncGetEncodePresetConfigEx
     nv_enc_get_encode_preset_config_ex: Option<unsafe extern "C" fn(*mut c_void, NvEncGuid, NvEncGuid, u32, *mut c_void) -> NVENCSTATUS>,
+    // [40] nvEncGetSequenceParamEx
+    nv_enc_get_sequence_param_ex: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NVENCSTATUS>,
 }
 
 // ── IPC client singleton ───────────────────────────────────────────────
@@ -364,6 +452,54 @@ fn locked_input_buffers() -> &'static Mutex<HashMap<u64, LockedInputBufferInfo>>
     LOCKED_INPUT_BUFFERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// ── Input buffer dimension tracking ────────────────────────────────────
+// We track height and format per input buffer so LockInputBuffer can
+// calculate the correct shadow buffer size from pitch + height + format.
+
+struct InputBufferDims {
+    height: u32,
+    buffer_fmt: u32,
+}
+
+static INPUT_BUFFER_DIMS: OnceLock<Mutex<HashMap<u64, InputBufferDims>>> = OnceLock::new();
+
+fn input_buffer_dims() -> &'static Mutex<HashMap<u64, InputBufferDims>> {
+    INPUT_BUFFER_DIMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// ── Input-to-output buffer pairing ─────────────────────────────────────
+// ffmpeg creates input and bitstream buffers in pairs. We track the last
+// created input buffer so we can pair it with the next bitstream buffer.
+// This is needed because some ffmpeg versions don't set outputBitstream
+// in NV_ENC_PIC_PARAMS.
+
+static LAST_INPUT_BUFFER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static INPUT_TO_OUTPUT_MAP: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+
+fn input_to_output_map() -> &'static Mutex<HashMap<u64, u64>> {
+    INPUT_TO_OUTPUT_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Calculate total buffer size from pitch, height, and NVENC buffer format.
+fn calc_buffer_size(pitch: u32, height: u32, buffer_fmt: u32) -> usize {
+    let p = pitch as usize;
+    let h = height as usize;
+    match buffer_fmt {
+        // NV12, YV12, IYUV — 4:2:0 planar/semi-planar: 1.5x height
+        0x1 | 0x10 | 0x100 => p * h * 3 / 2,
+        // YUV420_10BIT — 4:2:0 10-bit
+        0x10000 => p * h * 3 / 2,
+        // YUV444 — 3 full planes
+        0x1000 => p * h * 3,
+        // YUV444_10BIT — 3 full 10-bit planes
+        0x100000 => p * h * 3,
+        // ARGB, ABGR, ARGB10, ABGR10, AYUV — pitch already includes 4 bytes/pixel
+        0x1000000 | 0x10000000 | 0x2000000 | 0x20000000 | 0x4000000 => p * h,
+        // Unknown — generous fallback
+        _ => p * h * 4,
+    }
+}
+
 // ── Shadow buffers for LockBitstream ───────────────────────────────────
 // When we lock a bitstream buffer, the server sends us encoded data. We keep
 // it in a local buffer until the app calls unlock.
@@ -406,11 +542,14 @@ pub unsafe extern "C" fn NvEncodeAPIGetMaxSupportedVersion(version: *mut u32) ->
         )
         .try_init();
 
+    debug!("NVENC GetMaxSupportedVersion: CALLED");
+
     if version.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
 
     let resp = send_nvenc_command(NvencCommand::GetMaxSupportedVersion);
+    debug!("NVENC GetMaxSupportedVersion: got response: {:?}", resp);
     match resp {
         NvencResponse::MaxSupportedVersion { version: v } => {
             *version = v;
@@ -443,6 +582,9 @@ pub unsafe extern "C" fn NvEncodeAPICreateInstance(
     }
 
     let fl = &mut *function_list;
+
+    debug!("NVENC CreateInstance: fl version={:#x}, our struct size={}, ptr={:p}",
+        fl.version, std::mem::size_of::<NvEncApiFunctionList>(), function_list);
 
     // Fill the function table with our interceptors
     fl.nv_enc_open_encode_session = Some(interpose_open_encode_session);
@@ -479,7 +621,31 @@ pub unsafe extern "C" fn NvEncodeAPICreateInstance(
     fl.nv_enc_unregister_resource = Some(interpose_unregister_resource);
     fl.nv_enc_reconfigure_encoder = Some(interpose_reconfigure_encoder);
     fl.reserved1 = std::ptr::null_mut();
+    // Slots 34-36: motion vector functions (stub — not needed for encoding)
+    fl.nv_enc_create_mv_buffer = Some(interpose_stub_create_mv_buffer);
+    fl.nv_enc_destroy_mv_buffer = Some(interpose_stub_destroy_mv_buffer);
+    fl.nv_enc_run_motion_estimation_only = Some(interpose_stub_run_motion_estimation_only);
+    // Slot 37: nvEncGetLastErrorString
+    fl.nv_enc_get_last_error_string = Some(interpose_get_last_error_string);
+    // Slot 38: nvEncSetIOCudaStreams
+    fl.nv_enc_set_io_cuda_streams = Some(interpose_set_io_cuda_streams);
+    // Slot 39: nvEncGetEncodePresetConfigEx (used by modern ffmpeg)
     fl.nv_enc_get_encode_preset_config_ex = Some(interpose_get_encode_preset_config_ex);
+    // Slot 40: nvEncGetSequenceParamEx (stub)
+    fl.nv_enc_get_sequence_param_ex = Some(interpose_stub_get_sequence_param_ex);
+
+    // Diagnostic: dump function pointer values at critical slot offsets
+    // This lets us verify the CORRECT DLL is loaded and slots are properly filled
+    let raw_ptr = function_list as *const u8;
+    // Slot 38 = SetIOCudaStreams: offset = 8 + 38*8 = 312
+    let slot38_val = *(raw_ptr.add(312) as *const usize);
+    let our_set_streams = interpose_set_io_cuda_streams as *const () as usize;
+    // Slot 37 = GetLastErrorString: offset = 8 + 37*8 = 304
+    let slot37_val = *(raw_ptr.add(304) as *const usize);
+    // Slot 11 = InitializeEncoder: offset = 8 + 11*8 = 96
+    let slot11_val = *(raw_ptr.add(96) as *const usize);
+    debug!("NVENC CreateInstance BUILD=2026-02-27T2: slot11(InitEnc)={:#x} slot37(GetErr)={:#x} slot38(SetStreams)={:#x} expected={:#x} match={}",
+        slot11_val, slot37_val, slot38_val, our_set_streams, slot38_val == our_set_streams);
 
     NV_ENC_SUCCESS
 }
@@ -510,17 +676,27 @@ unsafe extern "C" fn interpose_get_encode_guid_count(
     }
     let enc_handle = match encoder_handle_from_ptr(encoder) {
         Some(h) => h,
-        None => return NV_ENC_ERR_INVALID_PARAM,
+        None => {
+            debug!("NVENC GetEncodeGUIDCount: encoder handle not found for ptr {:?}", encoder);
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
 
     let resp = send_nvenc_command(NvencCommand::GetEncodeGUIDCount { encoder: enc_handle });
     match resp {
         NvencResponse::GUIDCount(c) => {
             *count = c;
+            debug!("NVENC GetEncodeGUIDCount: encoder={:?} -> count={}", enc_handle, c);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
-        _ => NV_ENC_ERR_GENERIC,
+        NvencResponse::Error { code, message } => {
+            debug!("NVENC GetEncodeGUIDCount error: {} ({})", message, code);
+            code
+        }
+        other => {
+            debug!("NVENC GetEncodeGUIDCount: unexpected response: {:?}", other);
+            NV_ENC_ERR_GENERIC
+        }
     }
 }
 
@@ -532,26 +708,44 @@ unsafe extern "C" fn interpose_get_encode_guids(
     guid_array_size: u32,
     guid_count: *mut u32,
 ) -> NVENCSTATUS {
+    debug!("NVENC GetEncodeGUIDs: CALLED encoder={:?} array_size={}", encoder, guid_array_size);
     if guids.is_null() || guid_count.is_null() {
+        debug!("NVENC GetEncodeGUIDs: null pointer");
         return NV_ENC_ERR_INVALID_PTR;
     }
     let enc_handle = match encoder_handle_from_ptr(encoder) {
         Some(h) => h,
-        None => return NV_ENC_ERR_INVALID_PARAM,
+        None => {
+            debug!("NVENC GetEncodeGUIDs: encoder handle not found for ptr {:?}", encoder);
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
 
+    debug!("NVENC GetEncodeGUIDs: sending to daemon, encoder={:?}", enc_handle);
     let resp = send_nvenc_command(NvencCommand::GetEncodeGUIDs { encoder: enc_handle });
     match resp {
         NvencResponse::GUIDs(nv_guids) => {
             let write_count = std::cmp::min(nv_guids.len(), guid_array_size as usize);
             for i in 0..write_count {
-                *guids.add(i) = NvEncGuid::from_nv_guid(&nv_guids[i]);
+                let g = NvEncGuid::from_nv_guid(&nv_guids[i]);
+                debug!("NVENC GetEncodeGUIDs: guid[{}] = {:08x}-{:04x}-{:04x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                    i, g.data1, g.data2, g.data3,
+                    g.data4[0], g.data4[1], g.data4[2], g.data4[3],
+                    g.data4[4], g.data4[5], g.data4[6], g.data4[7]);
+                *guids.add(i) = g;
             }
             *guid_count = write_count as u32;
+            debug!("NVENC GetEncodeGUIDs: returning {} guid(s)", write_count);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
-        _ => NV_ENC_ERR_GENERIC,
+        NvencResponse::Error { code, message } => {
+            debug!("NVENC GetEncodeGUIDs error: {} ({})", message, code);
+            code
+        }
+        other => {
+            debug!("NVENC GetEncodeGUIDs: unexpected response: {:?}", other);
+            NV_ENC_ERR_GENERIC
+        }
     }
 }
 
@@ -667,17 +861,22 @@ unsafe extern "C" fn interpose_get_encode_caps(
         None => return NV_ENC_ERR_INVALID_PARAM,
     };
 
+    let query = (*caps_param).caps_to_query;
     let resp = send_nvenc_command(NvencCommand::GetEncodeCaps {
         encoder: enc_handle,
         encode_guid: encode_guid.to_nv_guid(),
-        caps_param: (*caps_param).caps_to_query as i32,
+        caps_param: query as i32,
     });
     match resp {
         NvencResponse::CapsValue(val) => {
+            debug!("NVENC GetEncodeCaps: query={} -> val={}", query, val);
             *caps_val = val;
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, message } => {
+            debug!("NVENC GetEncodeCaps: query={} -> ERROR code={} msg={}", query, code, message);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -754,6 +953,7 @@ unsafe extern "C" fn interpose_get_encode_preset_config(
     preset_guid: NvEncGuid,
     preset_config: *mut c_void,
 ) -> NVENCSTATUS {
+    debug!("NVENC GetEncodePresetConfig (legacy): CALLED encoder={:p}", encoder);
     if preset_config.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -784,6 +984,37 @@ unsafe extern "C" fn interpose_get_encode_preset_config(
 
 // ── [11] nvEncInitializeEncoder ────────────────────────────────────────
 
+/// NV_ENC_INITIALIZE_PARAMS layout on 64-bit to determine size and pointer offsets.
+/// We only need this for sizeof and field offsets; fields themselves are sent as raw bytes.
+#[repr(C)]
+struct NvEncInitializeParamsLayout {
+    version: u32,
+    encode_guid: [u8; 16],
+    preset_guid: [u8; 16],
+    encode_width: u32,
+    encode_height: u32,
+    dar_width: u32,
+    dar_height: u32,
+    frame_rate_num: u32,
+    frame_rate_den: u32,
+    enable_encode_async: u32,
+    enable_ptd: u32,
+    bitfields: u32,
+    priv_data_size: u32,
+    _reserved_pad: u32,            // explicit padding / reserved (SDK 13.0)
+    priv_data: *mut c_void,        // offset 80 on 64-bit
+    encode_config: *mut c_void,    // offset 88 on 64-bit
+    max_encode_width: u32,
+    max_encode_height: u32,
+    me_hints: [u64; 2],           // NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE[2]
+    tuning_info: u32,
+    buffer_format: u32,
+    num_state_buffers: u32,
+    output_stats_level: u32,
+    reserved1: [u32; 284],
+    reserved2: [*mut c_void; 64],
+}
+
 unsafe extern "C" fn interpose_initialize_encoder(
     encoder: *mut c_void,
     create_encode_params: *mut c_void,
@@ -796,19 +1027,66 @@ unsafe extern "C" fn interpose_initialize_encoder(
         None => return NV_ENC_ERR_INVALID_PARAM,
     };
 
-    // Read the version field to determine the struct size, then send raw bytes.
-    // NV_ENC_INITIALIZE_PARAMS starts with a version field: (struct_size | (api_ver << 16)).
-    let version = *(create_encode_params as *const u32);
-    let struct_size = (version & 0xFFFF) as usize;
-    let struct_size = if struct_size == 0 { 4096 } else { struct_size }; // fallback
+    let params_size = std::mem::size_of::<NvEncInitializeParamsLayout>();
+    let params_ptr = create_encode_params as *const u8;
 
-    let params = std::slice::from_raw_parts(create_encode_params as *const u8, struct_size).to_vec();
+    // Read the encodeConfig pointer at the known offset
+    let config_ptr_offset = std::mem::offset_of!(NvEncInitializeParamsLayout, encode_config);
+    let encode_config_ptr = *(params_ptr.add(config_ptr_offset) as *const *mut c_void);
+
+    // Also read the privData pointer offset for zeroing
+    let priv_data_offset = std::mem::offset_of!(NvEncInitializeParamsLayout, priv_data);
+
+    debug!(
+        "NVENC InitializeEncoder: encoder={:p}, params_size={}, config_ptr_offset={}, encodeConfig={:p}",
+        encoder, params_size, config_ptr_offset, encode_config_ptr
+    );
+
+    // Read the full NV_ENC_INITIALIZE_PARAMS as raw bytes
+    let mut params = std::slice::from_raw_parts(params_ptr, params_size).to_vec();
+
+    // Zero out client-side pointers that are meaningless on the server
+    let ptr_size = std::mem::size_of::<*mut c_void>();
+    // encodeConfig pointer
+    for b in &mut params[config_ptr_offset..config_ptr_offset + ptr_size] {
+        *b = 0;
+    }
+    // privData pointer
+    for b in &mut params[priv_data_offset..priv_data_offset + ptr_size] {
+        *b = 0;
+    }
+
+    // If encodeConfig is non-null, read the NV_ENC_CONFIG data too.
+    // NV_ENC_CONFIG is ~4608 bytes on 64-bit. Read 4096 bytes (safe, within allocation).
+    // The server will pad it to a larger buffer for the real driver.
+    const CONFIG_READ_SIZE: usize = 4096;
+    let encode_config = if !encode_config_ptr.is_null() {
+        let config_bytes = std::slice::from_raw_parts(
+            encode_config_ptr as *const u8,
+            CONFIG_READ_SIZE,
+        ).to_vec();
+        debug!("NVENC InitializeEncoder: encodeConfig version={:#010x}, reading {} bytes",
+            u32::from_le_bytes([config_bytes[0], config_bytes[1], config_bytes[2], config_bytes[3]]),
+            CONFIG_READ_SIZE);
+        Some(config_bytes)
+    } else {
+        None
+    };
 
     let resp = send_nvenc_command(NvencCommand::InitializeEncoder {
         encoder: enc_handle,
         params,
+        encode_config,
     });
-    response_to_status(&resp)
+    let status = response_to_status(&resp);
+    debug!("NVENC InitializeEncoder: response status={} — about to return to caller (BUILD=2026-02-27T2)", status);
+    // Force flush stderr to ensure the log appears before potential crash
+    #[cfg(target_os = "windows")]
+    {
+        use std::io::Write;
+        let _ = std::io::stderr().flush();
+    }
+    status
 }
 
 // ── [12] nvEncCreateInputBuffer ────────────────────────────────────────
@@ -817,6 +1095,7 @@ unsafe extern "C" fn interpose_create_input_buffer(
     encoder: *mut c_void,
     create_input_buffer_params: *mut NvEncCreateInputBufferParams,
 ) -> NVENCSTATUS {
+    debug!("NVENC CreateInputBuffer: CALLED encoder={:?}", encoder);
     if create_input_buffer_params.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -826,6 +1105,7 @@ unsafe extern "C" fn interpose_create_input_buffer(
     };
 
     let params = &mut *create_input_buffer_params;
+    debug!("NVENC CreateInputBuffer: {}x{} fmt={}", params.width, params.height, params.buffer_fmt);
 
     let resp = send_nvenc_command(NvencCommand::CreateInputBuffer {
         encoder: enc_handle,
@@ -837,9 +1117,23 @@ unsafe extern "C" fn interpose_create_input_buffer(
         NvencResponse::InputBufferCreated { handle } => {
             let id = handle_store::store_input_buffer(handle);
             params.input_buffer = id as NV_ENC_INPUT_PTR;
+            // Track dimensions for LockInputBuffer shadow buffer allocation
+            {
+                let mut dims = input_buffer_dims().lock();
+                dims.insert(id, InputBufferDims {
+                    height: params.height,
+                    buffer_fmt: params.buffer_fmt,
+                });
+            }
+            // Record last input buffer ID for pairing with next bitstream buffer
+            LAST_INPUT_BUFFER_ID.store(id, std::sync::atomic::Ordering::Relaxed);
+            debug!("NVENC CreateInputBuffer: SUCCESS id={:#x}", id);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, .. } => {
+            debug!("NVENC CreateInputBuffer: ERROR code={}", code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -866,6 +1160,7 @@ unsafe extern "C" fn interpose_destroy_input_buffer(
     });
     if response_to_status(&resp) == NV_ENC_SUCCESS {
         handle_store::remove_input_buffer(buf_id);
+        input_buffer_dims().lock().remove(&buf_id);
     }
     response_to_status(&resp)
 }
@@ -876,6 +1171,7 @@ unsafe extern "C" fn interpose_create_bitstream_buffer(
     encoder: *mut c_void,
     create_bitstream_buffer_params: *mut NvEncCreateBitstreamBufferParams,
 ) -> NVENCSTATUS {
+    debug!("NVENC CreateBitstreamBuffer: CALLED encoder={:?}", encoder);
     if create_bitstream_buffer_params.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -893,9 +1189,19 @@ unsafe extern "C" fn interpose_create_bitstream_buffer(
         NvencResponse::BitstreamBufferCreated { handle } => {
             let id = handle_store::store_bitstream_buffer(handle);
             params.bitstream_buffer = id as NV_ENC_OUTPUT_PTR;
+            // Pair this bitstream buffer with the last input buffer
+            let last_input = LAST_INPUT_BUFFER_ID.load(std::sync::atomic::Ordering::Relaxed);
+            if last_input != 0 {
+                input_to_output_map().lock().insert(last_input, id);
+                LAST_INPUT_BUFFER_ID.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+            debug!("NVENC CreateBitstreamBuffer: SUCCESS id={:#x} paired_with_input={:#x}", id, last_input);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, .. } => {
+            debug!("NVENC CreateBitstreamBuffer: ERROR code={}", code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -932,6 +1238,7 @@ unsafe extern "C" fn interpose_encode_picture(
     encoder: *mut c_void,
     encode_pic_params: *mut c_void,
 ) -> NVENCSTATUS {
+    debug!("NVENC EncodePicture: CALLED encoder={:?}", encoder);
     if encode_pic_params.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -940,16 +1247,28 @@ unsafe extern "C" fn interpose_encode_picture(
         None => return NV_ENC_ERR_INVALID_PARAM,
     };
 
-    // Read the NV_ENC_PIC_PARAMS fields we need.
-    // The struct starts with a version field; use it to determine size.
     let pic = encode_pic_params as *const NvEncPicParams;
-    let version = (*pic).version;
-    let struct_size = (version & 0xFFFF) as usize;
-    let struct_size = if struct_size == 0 { 4096 } else { struct_size };
+
+    // NV_ENC_PIC_PARAMS is a large struct. Use a safe fixed size for serialization.
+    // The version field does NOT contain the struct size (unlike some NVIDIA APIs).
+    const PIC_PARAMS_SAFE_SIZE: usize = 4096;
 
     // Resolve input/output handles
     let input_id = (*pic).input_buffer as u64;
-    let output_id = (*pic).output_bitstream as u64;
+    let mut output_id = (*pic).output_bitstream as u64;
+
+    // If outputBitstream is NULL, look up the paired bitstream buffer
+    if output_id == 0 && input_id != 0 {
+        if let Some(&paired_output) = input_to_output_map().lock().get(&input_id) {
+            debug!("NVENC EncodePicture: outputBitstream was NULL, using paired buffer {:#x} for input {:#x}",
+                paired_output, input_id);
+            output_id = paired_output;
+        }
+    }
+
+    debug!("NVENC EncodePicture: input={:#x} output={:#x} type={} {}x{} pitch={}",
+        input_id, output_id, (*pic).picture_type,
+        (*pic).input_width, (*pic).input_height, (*pic).input_pitch);
 
     // Input can be either an input buffer or a mapped resource
     let input_handle = handle_store::get_input_buffer(input_id)
@@ -959,10 +1278,10 @@ unsafe extern "C" fn interpose_encode_picture(
     let output_handle = handle_store::get_bitstream_buffer(output_id)
         .unwrap_or(NetworkHandle::null());
 
-    // Serialize the raw params (excluding pointers that we resolve separately)
+    // Serialize the raw params
     let params_bytes = std::slice::from_raw_parts(
         encode_pic_params as *const u8,
-        struct_size,
+        PIC_PARAMS_SAFE_SIZE,
     ).to_vec();
 
     let resp = send_nvenc_command(NvencCommand::EncodePicture {
@@ -972,7 +1291,9 @@ unsafe extern "C" fn interpose_encode_picture(
         output: output_handle,
         picture_type: (*pic).picture_type,
     });
-    response_to_status(&resp)
+    let status = response_to_status(&resp);
+    debug!("NVENC EncodePicture: response status={}", status);
+    status
 }
 
 // ── [17] nvEncLockBitstream ────────────────────────────────────────────
@@ -991,9 +1312,13 @@ unsafe extern "C" fn interpose_lock_bitstream(
 
     let params = &mut *lock_bitstream_params;
     let buf_id = params.output_bitstream as u64;
+    debug!("NVENC LockBitstream: buf_id={:#x}", buf_id);
     let buf_handle = match handle_store::get_bitstream_buffer(buf_id) {
         Some(h) => h,
-        None => return NV_ENC_ERR_INVALID_PARAM,
+        None => {
+            debug!("NVENC LockBitstream: FAILED to find handle for buf_id={:#x}", buf_id);
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
 
     let resp = send_nvenc_command(NvencCommand::LockBitstream {
@@ -1084,10 +1409,21 @@ unsafe extern "C" fn interpose_lock_input_buffer(
         input_buffer: buf_handle,
     });
     match resp {
-        NvencResponse::InputBufferLocked { pitch, buffer_size } => {
+        NvencResponse::InputBufferLocked { pitch, buffer_size: _ } => {
+            // Calculate shadow buffer size from pitch + tracked dimensions
+            let size = {
+                let dims = input_buffer_dims().lock();
+                if let Some(d) = dims.get(&buf_id) {
+                    calc_buffer_size(pitch, d.height, d.buffer_fmt)
+                } else {
+                    // Fallback: generous estimate (4K * pitch)
+                    debug!("NVENC LockInputBuffer: no dims for buf {:#x}, using fallback size", buf_id);
+                    (pitch as usize) * 4096
+                }
+            };
+            debug!("NVENC LockInputBuffer: buf={:#x} pitch={} shadow_size={}", buf_id, pitch, size);
             // Allocate a shadow buffer for the app to write pixel data into
-            let data = vec![0u8; buffer_size as usize];
-            let data_ptr = data.as_ptr() as *mut c_void;
+            let data = vec![0u8; size];
             let mut locked = locked_input_buffers().lock();
             locked.insert(buf_id, LockedInputBufferInfo {
                 data,
@@ -1097,8 +1433,6 @@ unsafe extern "C" fn interpose_lock_input_buffer(
             let info = locked.get(&buf_id).unwrap();
             params.buffer_data_ptr = info.data.as_ptr() as *mut c_void;
             params.pitch = pitch;
-            // Suppress unused variable warning
-            let _ = data_ptr;
             NV_ENC_SUCCESS
         }
         NvencResponse::Error { code, .. } => code,
@@ -1175,6 +1509,7 @@ unsafe extern "C" fn interpose_get_sequence_params(
     encoder: *mut c_void,
     payload: *mut NvEncSequenceParamPayload,
 ) -> NVENCSTATUS {
+    debug!("NVENC GetSequenceParams: CALLED encoder={:?}", encoder);
     if payload.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -1198,9 +1533,13 @@ unsafe extern "C" fn interpose_get_sequence_params(
             if !p.out_sps_pps_payload_size.is_null() {
                 *p.out_sps_pps_payload_size = copy_len as u32;
             }
+            debug!("NVENC GetSequenceParams: SUCCESS {} bytes", copy_len);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, .. } => {
+            debug!("NVENC GetSequenceParams: ERROR code={}", code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -1231,6 +1570,7 @@ unsafe extern "C" fn interpose_map_input_resource(
     encoder: *mut c_void,
     map_input_resource_params: *mut NvEncMapInputResourceParams,
 ) -> NVENCSTATUS {
+    debug!("NVENC MapInputResource: CALLED encoder={:?}", encoder);
     if map_input_resource_params.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -1241,9 +1581,13 @@ unsafe extern "C" fn interpose_map_input_resource(
 
     let params = &mut *map_input_resource_params;
     let reg_id = params.input_resource as u64;
+    debug!("NVENC MapInputResource: input_resource={:#x}", reg_id);
     let reg_handle = match handle_store::get_registered_resource(reg_id) {
         Some(h) => h,
-        None => return NV_ENC_ERR_INVALID_PARAM,
+        None => {
+            debug!("NVENC MapInputResource: could not find registered resource {:#x}", reg_id);
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
 
     let resp = send_nvenc_command(NvencCommand::MapInputResource {
@@ -1254,9 +1598,13 @@ unsafe extern "C" fn interpose_map_input_resource(
         NvencResponse::ResourceMapped { handle } => {
             let id = handle_store::store_mapped_resource(handle);
             params.mapped_resource = id as NV_ENC_INPUT_PTR;
+            debug!("NVENC MapInputResource: SUCCESS id={:#x}", id);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, .. } => {
+            debug!("NVENC MapInputResource: ERROR code={}", code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -1339,26 +1687,21 @@ unsafe extern "C" fn interpose_open_encode_session_ex(
     let device_type = params.device_type;
 
     // The device pointer is a CUcontext from our CUDA interpose.
-    // Look it up in the CUDA interpose handle_store to get the NetworkHandle.
-    // The device pointer was returned by cuCtxCreate as an opaque local ID.
+    // Resolve it to a proper NetworkHandle via the CUDA interpose's exported function.
     let cuda_ctx_id = params.device as u64;
 
-    // We need the CUDA context's NetworkHandle. Since the NVENC interpose and
-    // CUDA interpose are separate DLLs, we cannot directly access the CUDA
-    // handle_store. Instead, we use a convention: the CUDA interpose returns
-    // opaque IDs as pointers, and we pass this ID to the daemon which resolves
-    // it server-side. We create a dummy NetworkHandle with the resource_id set
-    // to the local CUDA context ID, and the daemon/server resolves it.
-    //
-    // Actually, the client daemon sees the CUDA context handle as stored in its
-    // own handle maps from previous CUDA commands. We send the cuda_ctx_id
-    // which the daemon can use to look up the real server-side handle.
-    let cuda_context = NetworkHandle {
-        server_id: 0,
-        session_id: 0,
-        resource_id: cuda_ctx_id,
-        resource_type: rgpu_protocol::handle::ResourceType::CuContext,
+    let cuda_context = match resolve_cuda_ctx_handle(cuda_ctx_id) {
+        Some(h) => {
+            debug!("NVENC: resolved CUDA ctx local_id={:#x} -> {:?}", cuda_ctx_id, h);
+            h
+        }
+        None => {
+            debug!("NVENC: could not resolve CUDA context local_id={:#x}", cuda_ctx_id);
+            return NV_ENC_ERR_INVALID_DEVICE;
+        }
     };
+
+    debug!("NVENC OpenEncodeSessionEx: ctx_id={:#x} -> network_handle={:?} device_type={}", cuda_ctx_id, cuda_context, device_type);
 
     let resp = send_nvenc_command(NvencCommand::OpenEncodeSession {
         cuda_context,
@@ -1367,10 +1710,14 @@ unsafe extern "C" fn interpose_open_encode_session_ex(
     match resp {
         NvencResponse::EncoderOpened { handle } => {
             let id = handle_store::store_encoder(handle);
+            debug!("NVENC OpenEncodeSessionEx: SUCCESS encoder_ptr={:#x} handle={:?}", id, handle);
             *encoder = id as *mut c_void;
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, message } => {
+            debug!("NVENC OpenEncodeSession error: {} ({})", message, code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -1381,6 +1728,7 @@ unsafe extern "C" fn interpose_register_resource(
     encoder: *mut c_void,
     register_resource_params: *mut NvEncRegisterResourceParams,
 ) -> NVENCSTATUS {
+    debug!("NVENC RegisterResource: CALLED encoder={:?}", encoder);
     if register_resource_params.is_null() {
         return NV_ENC_ERR_INVALID_PTR;
     }
@@ -1390,16 +1738,22 @@ unsafe extern "C" fn interpose_register_resource(
     };
 
     let params = &mut *register_resource_params;
+    debug!("NVENC RegisterResource: type={} resource={:?} {}x{} pitch={} fmt={}",
+        params.resource_type, params.resource_to_register,
+        params.width, params.height, params.pitch, params.buffer_format);
 
-    // The resource_to_register is a CUDA device pointer (CUdeviceptr) or similar.
-    // It was returned by our CUDA interpose as an opaque ID. Create a handle
-    // that the daemon can resolve.
+    // The resource_to_register is a CUDA device pointer (CUdeviceptr) from our interpose.
+    // Resolve it to a proper NetworkHandle via the CUDA interpose's export.
     let resource_id = params.resource_to_register as u64;
-    let resource = NetworkHandle {
-        server_id: 0,
-        session_id: 0,
-        resource_id,
-        resource_type: rgpu_protocol::handle::ResourceType::CuDevicePtr,
+    let resource = match resolve_cuda_mem_handle(resource_id) {
+        Some(h) => {
+            debug!("NVENC RegisterResource: resolved mem local_id={:#x} -> {:?}", resource_id, h);
+            h
+        }
+        None => {
+            debug!("NVENC RegisterResource: could not resolve resource local_id={:#x}", resource_id);
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
 
     let resp = send_nvenc_command(NvencCommand::RegisterResource {
@@ -1415,9 +1769,13 @@ unsafe extern "C" fn interpose_register_resource(
         NvencResponse::ResourceRegistered { handle } => {
             let id = handle_store::store_registered_resource(handle);
             params.registered_resource = id as NV_ENC_REGISTERED_PTR;
+            debug!("NVENC RegisterResource: SUCCESS id={:#x}", id);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
+        NvencResponse::Error { code, .. } => {
+            debug!("NVENC RegisterResource: ERROR code={}", code);
+            code
+        }
         _ => NV_ENC_ERR_GENERIC,
     }
 }
@@ -1462,12 +1820,9 @@ unsafe extern "C" fn interpose_reconfigure_encoder(
         None => return NV_ENC_ERR_INVALID_PARAM,
     };
 
-    // Read struct size from version field
-    let version = *(reconfig_params as *const u32);
-    let struct_size = (version & 0xFFFF) as usize;
-    let struct_size = if struct_size == 0 { 4096 } else { struct_size };
-
-    let params = std::slice::from_raw_parts(reconfig_params as *const u8, struct_size).to_vec();
+    // NV_ENC_RECONFIGURE_PARAMS is a large struct - use safe fixed size
+    const RECONFIG_PARAMS_SAFE_SIZE: usize = 8192;
+    let params = std::slice::from_raw_parts(reconfig_params as *const u8, RECONFIG_PARAMS_SAFE_SIZE).to_vec();
 
     let resp = send_nvenc_command(NvencCommand::ReconfigureEncoder {
         encoder: enc_handle,
@@ -1482,31 +1837,110 @@ unsafe extern "C" fn interpose_get_encode_preset_config_ex(
     encoder: *mut c_void,
     encode_guid: NvEncGuid,
     preset_guid: NvEncGuid,
-    _tuning_info: u32,
+    tuning_info: u32,
     preset_config: *mut c_void,
 ) -> NVENCSTATUS {
+    debug!("NVENC GetEncodePresetConfigEx: CALLED encoder={:p} tuning={}", encoder, tuning_info);
     if preset_config.is_null() {
+        debug!("NVENC GetEncodePresetConfigEx: NULL preset_config ptr");
         return NV_ENC_ERR_INVALID_PTR;
     }
     let enc_handle = match encoder_handle_from_ptr(encoder) {
         Some(h) => h,
-        None => return NV_ENC_ERR_INVALID_PARAM,
+        None => {
+            debug!("NVENC GetEncodePresetConfigEx: failed to resolve encoder handle");
+            return NV_ENC_ERR_INVALID_PARAM;
+        }
     };
+    debug!("NVENC GetEncodePresetConfigEx: sending IPC command");
 
-    // Reuse the same server-side command — the server handles both legacy and Ex variants
-    let resp = send_nvenc_command(NvencCommand::GetEncodePresetConfig {
+    let resp = send_nvenc_command(NvencCommand::GetEncodePresetConfigEx {
         encoder: enc_handle,
         encode_guid: encode_guid.to_nv_guid(),
         preset_guid: preset_guid.to_nv_guid(),
+        tuning_info,
     });
+    debug!("NVENC GetEncodePresetConfigEx: got response");
     match resp {
         NvencResponse::PresetConfig(data) => {
+            debug!("NVENC GetEncodePresetConfigEx: SUCCESS {} bytes", data.len());
             let dst = preset_config as *mut u8;
             let copy_len = data.len();
             std::ptr::copy_nonoverlapping(data.as_ptr(), dst, copy_len);
             NV_ENC_SUCCESS
         }
-        NvencResponse::Error { code, .. } => code,
-        _ => NV_ENC_ERR_GENERIC,
+        NvencResponse::Error { code, message } => {
+            debug!("NVENC GetEncodePresetConfigEx: error code={} msg={}", code, message);
+            code
+        }
+        _ => {
+            debug!("NVENC GetEncodePresetConfigEx: unexpected response");
+            NV_ENC_ERR_GENERIC
+        }
     }
+}
+
+// ── [37] nvEncGetLastErrorString ────────────────────────────────────────
+
+/// Stub for nvEncGetLastErrorString. Returns a static empty string.
+/// The real driver's error strings are not accessible over the network.
+static EMPTY_ERROR_STRING: [u8; 1] = [0u8; 1];
+
+unsafe extern "C" fn interpose_get_last_error_string(
+    _encoder: *mut c_void,
+) -> *const u8 {
+    EMPTY_ERROR_STRING.as_ptr()
+}
+
+// ── [38] nvEncSetIOCudaStreams ──────────────────────────────────────────
+
+/// Stub for nvEncSetIOCudaStreams. The server manages CUDA streams internally,
+/// so we accept and ignore the client-side stream settings.
+unsafe extern "C" fn interpose_set_io_cuda_streams(
+    encoder: *mut c_void,
+    _input_stream: *mut c_void,
+    _output_stream: *mut c_void,
+) -> NVENCSTATUS {
+    debug!("NVENC SetIOCudaStreams: CALLED encoder={:?} (stub, returning SUCCESS)", encoder);
+    NV_ENC_SUCCESS
+}
+
+// ── [34] nvEncCreateMVBuffer (stub) ────────────────────────────────────
+
+unsafe extern "C" fn interpose_stub_create_mv_buffer(
+    _encoder: *mut c_void,
+    _params: *mut c_void,
+) -> NVENCSTATUS {
+    debug!("NVENC CreateMVBuffer: CALLED (stub, returning UNIMPLEMENTED)");
+    NV_ENC_ERR_UNIMPLEMENTED
+}
+
+// ── [35] nvEncDestroyMVBuffer (stub) ───────────────────────────────────
+
+unsafe extern "C" fn interpose_stub_destroy_mv_buffer(
+    _encoder: *mut c_void,
+    _buffer: *mut c_void,
+) -> NVENCSTATUS {
+    debug!("NVENC DestroyMVBuffer: CALLED (stub, returning UNIMPLEMENTED)");
+    NV_ENC_ERR_UNIMPLEMENTED
+}
+
+// ── [36] nvEncRunMotionEstimationOnly (stub) ───────────────────────────
+
+unsafe extern "C" fn interpose_stub_run_motion_estimation_only(
+    _encoder: *mut c_void,
+    _params: *mut c_void,
+) -> NVENCSTATUS {
+    debug!("NVENC RunMotionEstimationOnly: CALLED (stub, returning UNIMPLEMENTED)");
+    NV_ENC_ERR_UNIMPLEMENTED
+}
+
+// ── [40] nvEncGetSequenceParamEx (stub) ────────────────────────────────
+
+unsafe extern "C" fn interpose_stub_get_sequence_param_ex(
+    _encoder: *mut c_void,
+    _params: *mut c_void,
+) -> NVENCSTATUS {
+    debug!("NVENC GetSequenceParamEx: CALLED (stub, returning UNIMPLEMENTED)");
+    NV_ENC_ERR_UNIMPLEMENTED
 }

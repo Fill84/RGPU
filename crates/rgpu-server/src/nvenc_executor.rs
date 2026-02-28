@@ -27,6 +27,9 @@ pub struct NvencExecutor {
     cuda_executor: Arc<CudaExecutor>,
     /// Maps NetworkHandle -> real encoder session pointer
     encoder_handles: DashMap<NetworkHandle, *mut c_void>,
+    /// Maps encoder NetworkHandle -> the CUDA context used to create the session.
+    /// NVENC requires the CUDA context to be current for ALL API calls on an encoder.
+    encoder_contexts: DashMap<NetworkHandle, *mut c_void>,
     /// Maps NetworkHandle -> real input buffer pointer
     input_buffer_handles: DashMap<NetworkHandle, *mut c_void>,
     /// Maps NetworkHandle -> real bitstream buffer pointer
@@ -35,6 +38,9 @@ pub struct NvencExecutor {
     registered_resource_handles: DashMap<NetworkHandle, *mut c_void>,
     /// Maps NetworkHandle -> real mapped resource pointer
     mapped_resource_handles: DashMap<NetworkHandle, *mut c_void>,
+    /// Maps input buffer NetworkHandle -> locked data pointer (from LockInputBuffer).
+    /// Stored so UnlockInputBuffer can copy data without re-locking.
+    locked_input_ptrs: DashMap<NetworkHandle, *mut c_void>,
 }
 
 // SAFETY: NVENC driver pointers are valid across threads when used with proper
@@ -64,10 +70,12 @@ impl NvencExecutor {
             driver,
             cuda_executor,
             encoder_handles: DashMap::new(),
+            encoder_contexts: DashMap::new(),
             input_buffer_handles: DashMap::new(),
             bitstream_buffer_handles: DashMap::new(),
             registered_resource_handles: DashMap::new(),
             mapped_resource_handles: DashMap::new(),
+            locked_input_ptrs: DashMap::new(),
         }
     }
 
@@ -116,10 +124,16 @@ impl NvencExecutor {
         &self,
         handle: &NetworkHandle,
     ) -> Result<*mut c_void, NvencResponse> {
-        self.bitstream_buffer_handles
+        let result = self.bitstream_buffer_handles
             .get(handle)
-            .map(|b| *b)
-            .ok_or(NvencResponse::Error {
+            .map(|b| *b);
+        if result.is_none() {
+            warn!("resolve_bitstream_buffer FAILED for {:?}, map has {} entries",
+                handle,
+                self.bitstream_buffer_handles.len(),
+            );
+        }
+        result.ok_or(NvencResponse::Error {
                 code: nvenc_driver::NV_ENC_ERR_INVALID_PARAM,
                 message: "invalid bitstream buffer handle".to_string(),
             })
@@ -151,6 +165,17 @@ impl NvencExecutor {
                 code: nvenc_driver::NV_ENC_ERR_RESOURCE_NOT_MAPPED,
                 message: "invalid mapped resource handle".to_string(),
             })
+    }
+
+    /// Ensure the CUDA context associated with an encoder is current on this thread.
+    /// NVENC requires the creating CUDA context to be current for ALL API calls.
+    /// Due to tokio's thread migration, we must re-establish the context before each call.
+    fn ensure_encoder_context(&self, encoder_handle: &NetworkHandle) {
+        if let Some(ctx) = self.encoder_contexts.get(encoder_handle) {
+            if let Some(cuda_driver) = self.cuda_executor.driver_ref() {
+                let _ = cuda_driver.ctx_set_current(*ctx as crate::cuda_driver::CUcontext);
+            }
+        }
     }
 
     /// Execute an NVENC command and return the response.
@@ -190,10 +215,18 @@ impl NvencExecutor {
                     }
                 };
 
+                // Ensure the CUDA context is current on this thread before NVENC call
+                if let Some(cuda_driver) = self.cuda_executor.driver_ref() {
+                    let _ = cuda_driver.ctx_set_current(real_ctx as crate::cuda_driver::CUcontext);
+                }
+
                 match d.open_encode_session_ex(real_ctx, device_type) {
                     Ok(encoder) => {
                         let handle = session.alloc_handle(ResourceType::NvEncSession);
                         self.encoder_handles.insert(handle, encoder);
+                        // Track the CUDA context for this encoder session — we need
+                        // to re-establish it before every subsequent NVENC call.
+                        self.encoder_contexts.insert(handle, real_ctx);
                         debug!(
                             session_id = session.session_id,
                             "NvEnc OpenEncodeSession -> {:?}", handle
@@ -217,6 +250,7 @@ impl NvencExecutor {
                     Ok(d) => d,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_encoder = match self.encoder_handles.remove(&encoder) {
                     Some((_, e)) => e,
                     None => {
@@ -228,6 +262,7 @@ impl NvencExecutor {
                 };
 
                 let res = d.destroy_encoder(real_encoder);
+                self.encoder_contexts.remove(&encoder);
                 session.remove_handle(&encoder);
                 debug!(
                     session_id = session.session_id,
@@ -250,6 +285,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_encode_guid_count(real_encoder) {
                     Ok(count) => {
@@ -272,6 +308,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 // First get the count, then get the GUIDs
                 let count = match d.get_encode_guid_count(real_encoder) {
@@ -305,6 +342,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_encode_preset_count(real_encoder, encode_guid.0) {
                     Ok(count) => {
@@ -330,6 +368,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 // First get count
                 let count = match d.get_encode_preset_count(real_encoder, encode_guid.0) {
@@ -364,6 +403,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_encode_preset_config(real_encoder, encode_guid.0, preset_guid.0)
                 {
@@ -371,6 +411,35 @@ impl NvencExecutor {
                         debug!(
                             session_id = session.session_id,
                             "NvEnc GetEncodePresetConfig -> {} bytes", config.len()
+                        );
+                        NvencResponse::PresetConfig(config)
+                    }
+                    Err(e) => Self::nvenc_err(e),
+                }
+            }
+
+            NvencCommand::GetEncodePresetConfigEx {
+                encoder,
+                encode_guid,
+                preset_guid,
+                tuning_info,
+            } => {
+                let d = match self.driver() {
+                    Ok(d) => d,
+                    Err(e) => return e,
+                };
+                let real_encoder = match self.resolve_encoder(&encoder) {
+                    Ok(e) => e,
+                    Err(e) => return e,
+                };
+                self.ensure_encoder_context(&encoder);
+
+                match d.get_encode_preset_config_ex(real_encoder, encode_guid.0, preset_guid.0, tuning_info)
+                {
+                    Ok(config) => {
+                        debug!(
+                            session_id = session.session_id,
+                            "NvEnc GetEncodePresetConfigEx tuning={} -> {} bytes", tuning_info, config.len()
                         );
                         NvencResponse::PresetConfig(config)
                     }
@@ -391,6 +460,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_encode_caps(real_encoder, encode_guid.0, caps_param as u32) {
                     Ok(val) => {
@@ -400,7 +470,13 @@ impl NvencExecutor {
                         );
                         NvencResponse::CapsValue(val)
                     }
-                    Err(e) => Self::nvenc_err(e),
+                    Err(e) => {
+                        warn!(
+                            session_id = session.session_id,
+                            "NvEnc GetEncodeCaps({}) -> ERROR {}", caps_param, e
+                        );
+                        Self::nvenc_err(e)
+                    }
                 }
             }
 
@@ -416,6 +492,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_input_format_count(real_encoder, encode_guid.0) {
                     Ok(count) => {
@@ -441,6 +518,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 // First get count
                 let count = match d.get_input_format_count(real_encoder, encode_guid.0) {
@@ -464,6 +542,7 @@ impl NvencExecutor {
             NvencCommand::InitializeEncoder {
                 encoder,
                 mut params,
+                encode_config,
             } => {
                 let d = match self.driver() {
                     Ok(d) => d,
@@ -473,15 +552,67 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
+
+                // ── Patch API version fields ──────────────────────────
+                // The client may be compiled against a different SDK version (e.g. 12.2)
+                // than the server's driver (e.g. 13.0). NVENC rejects structs whose API
+                // version component doesn't match the session's negotiated version.
+                // Patch all version fields to use the server driver's API version.
+
+                // NV_ENC_INITIALIZE_PARAMS.version at offset 0
+                d.patch_struct_version(&mut params, 0);
+
+                // If the client sent NV_ENC_CONFIG data, patch the encodeConfig pointer
+                // in NV_ENC_INITIALIZE_PARAMS to point to a local buffer.
+                // On 64-bit, NV_ENC_INITIALIZE_PARAMS.encodeConfig is a pointer at offset 88.
+                const ENCODE_CONFIG_PTR_OFFSET: usize = 88;
+
+                // Pad config to a safe size so the real driver doesn't read past our buffer.
+                // NV_ENC_CONFIG is ~4600 bytes on 64-bit; use 8192 for safety.
+                const SAFE_CONFIG_SIZE: usize = 8192;
+
+                let mut config_buf: Option<Vec<u8>> = encode_config.map(|mut data| {
+                    // Patch NV_ENC_CONFIG.version at offset 0
+                    d.patch_struct_version(&mut data, 0);
+                    // Patch NV_ENC_RC_PARAMS.version at offset 40 (within NV_ENC_CONFIG)
+                    d.patch_struct_version(&mut data, 40);
+
+                    // Pad to safe size (zeros for reserved fields)
+                    if data.len() < SAFE_CONFIG_SIZE {
+                        data.resize(SAFE_CONFIG_SIZE, 0);
+                    }
+                    data
+                });
+
+                if let Some(ref mut config_data) = config_buf {
+                    let config_ptr = config_data.as_mut_ptr() as usize;
+                    if params.len() > ENCODE_CONFIG_PTR_OFFSET + 8 {
+                        params[ENCODE_CONFIG_PTR_OFFSET..ENCODE_CONFIG_PTR_OFFSET + 8]
+                            .copy_from_slice(&config_ptr.to_le_bytes());
+                        debug!(
+                            session_id = session.session_id,
+                            "NvEnc InitializeEncoder: patched encodeConfig ptr to {:p}, config_len={}",
+                            config_data.as_ptr(), config_data.len()
+                        );
+                    }
+                }
 
                 let res = d.initialize_encoder(real_encoder, &mut params);
-                debug!(
-                    session_id = session.session_id,
-                    "NvEnc InitializeEncoder -> {}", res
-                );
                 if res == NV_ENC_SUCCESS {
+                    info!(
+                        session_id = session.session_id,
+                        "NvEnc InitializeEncoder -> SUCCESS"
+                    );
                     NvencResponse::Success
                 } else {
+                    let err_str = d.get_last_error_string(real_encoder)
+                        .unwrap_or_default();
+                    error!(
+                        session_id = session.session_id,
+                        "NvEnc InitializeEncoder -> {} ({}): {}",
+                        nvenc_driver::nvenc_error_name(res), res, err_str
+                    );
                     Self::nvenc_err(res)
                 }
             }
@@ -498,6 +629,10 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
+
+                // Patch NV_ENC_RECONFIGURE_PARAMS.version at offset 0
+                d.patch_struct_version(&mut params, 0);
 
                 let res = d.reconfigure_encoder(real_encoder, &mut params);
                 debug!(
@@ -526,6 +661,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.create_input_buffer(real_encoder, width, height, buffer_fmt) {
                     Ok(buffer) => {
@@ -553,6 +689,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer = match self.input_buffer_handles.remove(&input_buffer) {
                     Some((_, b)) => b,
                     None => {
@@ -588,24 +725,24 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer = match self.resolve_input_buffer(&input_buffer) {
                     Ok(b) => b,
                     Err(e) => return e,
                 };
 
                 match d.lock_input_buffer(real_encoder, real_buffer) {
-                    Ok((_data_ptr, pitch)) => {
-                        // We return the pitch; the client will send pixel data
-                        // via UnlockInputBuffer. We calculate a reasonable buffer_size
-                        // estimate based on pitch. The actual size depends on the
-                        // encoder's configured height, but the client already knows it.
+                    Ok((data_ptr, pitch)) => {
+                        // Store the data pointer so UnlockInputBuffer can copy to it
+                        // without having to re-lock (which would fail since it's already locked).
+                        self.locked_input_ptrs.insert(input_buffer, data_ptr);
                         debug!(
                             session_id = session.session_id,
-                            "NvEnc LockInputBuffer {:?} -> pitch={}", input_buffer, pitch
+                            "NvEnc LockInputBuffer {:?} -> pitch={} ptr={:?}", input_buffer, pitch, data_ptr
                         );
                         NvencResponse::InputBufferLocked {
                             pitch,
-                            buffer_size: 0, // Client knows dimensions
+                            buffer_size: 0, // Client calculates from pitch + tracked height
                         }
                     }
                     Err(e) => Self::nvenc_err(e),
@@ -626,35 +763,33 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer = match self.resolve_input_buffer(&input_buffer) {
                     Ok(b) => b,
                     Err(e) => return e,
                 };
 
-                // If the client sent pixel data, we need to lock, write, then unlock.
-                // The buffer should already be locked from the LockInputBuffer call.
+                // The buffer was locked during LockInputBuffer — use the stored data pointer.
                 if !data.is_empty() {
-                    // Lock to get the data pointer, write, then unlock
-                    match d.lock_input_buffer(real_encoder, real_buffer) {
-                        Ok((data_ptr, _pitch)) => {
-                            if !data_ptr.is_null() {
-                                unsafe {
-                                    std::ptr::copy_nonoverlapping(
-                                        data.as_ptr(),
-                                        data_ptr as *mut u8,
-                                        data.len(),
-                                    );
-                                }
+                    if let Some((_, data_ptr)) = self.locked_input_ptrs.remove(&input_buffer) {
+                        if !data_ptr.is_null() {
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(
+                                    data.as_ptr(),
+                                    data_ptr as *mut u8,
+                                    data.len(),
+                                );
                             }
                         }
-                        Err(e) => {
-                            // Buffer might already be locked, that's fine
-                            // if it's NV_ENC_ERR_LOCK_BUSY, we still try to unlock
-                            if e != nvenc_driver::NV_ENC_ERR_LOCK_BUSY {
-                                return Self::nvenc_err(e);
-                            }
-                        }
+                    } else {
+                        warn!(
+                            session_id = session.session_id,
+                            "NvEnc UnlockInputBuffer: no stored ptr for {:?}, data will be lost", input_buffer
+                        );
                     }
+                } else {
+                    // No data sent, just remove stored ptr if any
+                    self.locked_input_ptrs.remove(&input_buffer);
                 }
 
                 let res = d.unlock_input_buffer(real_encoder, real_buffer);
@@ -680,6 +815,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.create_bitstream_buffer(real_encoder) {
                     Ok(buffer) => {
@@ -688,7 +824,8 @@ impl NvencExecutor {
                         self.bitstream_buffer_handles.insert(handle, buffer);
                         debug!(
                             session_id = session.session_id,
-                            "NvEnc CreateBitstreamBuffer -> {:?}", handle
+                            "NvEnc CreateBitstreamBuffer -> {:?} (real={:?})",
+                            handle, buffer
                         );
                         NvencResponse::BitstreamBufferCreated { handle }
                     }
@@ -708,6 +845,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer =
                     match self.bitstream_buffer_handles.remove(&bitstream_buffer) {
                         Some((_, b)) => b,
@@ -744,6 +882,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer = match self.resolve_bitstream_buffer(&bitstream_buffer) {
                     Ok(b) => b,
                     Err(e) => return e,
@@ -791,6 +930,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_buffer = match self.resolve_bitstream_buffer(&bitstream_buffer) {
                     Ok(b) => b,
                     Err(e) => return e,
@@ -826,6 +966,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 // Resolve the resource handle. For CUDA resources (type 1),
                 // this would be a device pointer from our CUDA executor.
@@ -883,6 +1024,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_resource =
                     match self.registered_resource_handles.remove(&registered_resource) {
                         Some((_, r)) => r,
@@ -919,6 +1061,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_resource =
                     match self.resolve_registered_resource(&registered_resource) {
                         Ok(r) => r,
@@ -952,6 +1095,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
                 let real_resource =
                     match self.mapped_resource_handles.remove(&mapped_resource) {
                         Some((_, r)) => r,
@@ -992,23 +1136,42 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 // Resolve input handle - could be an input buffer or mapped resource
-                let _real_input = self
+                let real_input = self
                     .input_buffer_handles
                     .get(&input)
                     .map(|b| *b)
-                    .or_else(|| self.mapped_resource_handles.get(&input).map(|r| *r));
+                    .or_else(|| self.mapped_resource_handles.get(&input).map(|r| *r))
+                    .unwrap_or(std::ptr::null_mut());
 
                 // Resolve output handle - should be a bitstream buffer
-                let _real_output = self.resolve_bitstream_buffer(&output);
+                let real_output = self.resolve_bitstream_buffer(&output)
+                    .unwrap_or(std::ptr::null_mut());
 
-                // The raw params bytes contain the NV_ENC_PIC_PARAMS struct.
-                // The client has already patched the input/output pointers in the
-                // raw bytes, or we patch them here if needed. For now, the client
-                // is expected to send properly formatted raw bytes with placeholder
-                // pointers that we can ignore (since the NVENC API already has
-                // the buffers bound via their handles).
+                // Patch NV_ENC_PIC_PARAMS.version at offset 0
+                d.patch_struct_version(&mut params, 0);
+
+                // Patch the real input/output buffer pointers into the params.
+                // The client sent fake IDs which we now replace with real GPU pointers.
+                // NV_ENC_PIC_PARAMS layout (64-bit):
+                //   offset 40: inputBuffer (NV_ENC_INPUT_PTR = void*)
+                //   offset 48: outputBitstream (NV_ENC_OUTPUT_PTR = void*)
+                if params.len() >= 64 {
+                    let input_bytes = (real_input as u64).to_le_bytes();
+                    let output_bytes = (real_output as u64).to_le_bytes();
+                    params[40..48].copy_from_slice(&input_bytes);
+                    params[48..56].copy_from_slice(&output_bytes);
+                    // Zero out completionEvent at offset 56 (client-side pointer)
+                    params[56..64].copy_from_slice(&[0u8; 8]);
+                    debug!(
+                        session_id = session.session_id,
+                        "NvEnc EncodePicture: patched input={:?} output={:?} (from {:?}/{:?})",
+                        real_input, real_output, input, output
+                    );
+                }
+
                 let res = d.encode_picture(real_encoder, &mut params);
                 debug!(
                     session_id = session.session_id,
@@ -1034,6 +1197,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_sequence_params(real_encoder) {
                     Ok(data) => {
@@ -1056,6 +1220,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 match d.get_encode_stats(real_encoder) {
                     Ok(data) => {
@@ -1081,6 +1246,7 @@ impl NvencExecutor {
                     Ok(e) => e,
                     Err(e) => return e,
                 };
+                self.ensure_encoder_context(&encoder);
 
                 let res =
                     d.invalidate_ref_frames(real_encoder, invalid_ref_frame_timestamp);
@@ -1137,6 +1303,16 @@ impl NvencExecutor {
         };
 
         let mut cleaned = 0u32;
+
+        // Ensure CUDA context is current for cleanup — find any encoder for this session
+        for entry in self.encoder_contexts.iter() {
+            if entry.key().session_id == session.session_id {
+                if let Some(cuda_driver) = self.cuda_executor.driver_ref() {
+                    let _ = cuda_driver.ctx_set_current(*entry.value() as crate::cuda_driver::CUcontext);
+                }
+                break;
+            }
+        }
 
         // Pass 1: Unmap mapped resources
         for h in handles
@@ -1208,10 +1384,13 @@ impl NvencExecutor {
             .iter()
             .filter(|h| h.resource_type == ResourceType::NvEncSession)
         {
+            // Ensure CUDA context is current for cleanup
+            self.ensure_encoder_context(h);
             if let Some((_, encoder)) = self.encoder_handles.remove(h) {
                 driver.destroy_encoder(encoder);
                 cleaned += 1;
             }
+            self.encoder_contexts.remove(h);
         }
 
         if cleaned > 0 {

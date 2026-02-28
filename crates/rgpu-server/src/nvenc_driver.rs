@@ -43,13 +43,19 @@ pub const NV_ENC_ERR_RESOURCE_NOT_REGISTERED: NvencStatus = 24;
 pub const NV_ENC_ERR_RESOURCE_NOT_MAPPED: NvencStatus = 25;
 
 /// NVENC API version for struct versioning and api_version fields: major | (minor << 24).
-/// We target NVENC API version 12.2.
-const NVENCAPI_VERSION: u32 = 12 | (2 << 24);
+/// We use the max supported version from the actual driver (queried at runtime).
+/// Fallback to 12.2 if not yet known.
+const NVENCAPI_VERSION_FALLBACK: u32 = 12 | (2 << 24);
 
-/// Struct version macro: NVENCAPI_VERSION | (struct_ver << 16) | (0x7 << 28).
+/// Struct version macro: api_version | (struct_ver << 16) | (0x7 << 28).
 /// The `ver` parameter is the struct version number (e.g. 1 for most structs, 2 for function list).
+fn nvenc_struct_version_with_api(api_version: u32, ver: u32) -> u32 {
+    api_version | (ver << 16) | (0x7 << 28)
+}
+
+/// Struct version macro using the fallback API version.
 fn nvenc_struct_version(ver: u32) -> u32 {
-    NVENCAPI_VERSION | (ver << 16) | (0x7 << 28)
+    nvenc_struct_version_with_api(NVENCAPI_VERSION_FALLBACK, ver)
 }
 
 // ── NVENC parameter structs (minimal FFI definitions) ─────────────────
@@ -90,12 +96,17 @@ pub struct NvEncCreateInputBuffer {
 }
 
 /// NV_ENC_CREATE_BITSTREAM_BUFFER
+/// Actual driver layout (confirmed via raw byte dump):
+///   [0..4]   version
+///   [4..8]   encoderBuffer (deprecated)
+///   [8..16]  reserved/padding (8 bytes, all zero)
+///   [16..24] bitstreamBuffer (output pointer written by driver)
 #[repr(C)]
 pub struct NvEncCreateBitstreamBuffer {
     pub version: u32,
-    pub reserved: u32,
-    pub bitstream_buffer: *mut c_void, // OUT: bitstream buffer pointer
-    pub reserved_mem_buf: *mut c_void,
+    pub encoder_buffer: u32,          // deprecated
+    pub reserved_pad: *mut c_void,    // padding — driver does NOT write here
+    pub bitstream_buffer: *mut c_void, // OUT: bitstream buffer pointer at offset 16
     pub reserved_size: u32,
     pub reserved1: [u32; 57],
     pub reserved2: [*mut c_void; 63],
@@ -184,48 +195,101 @@ pub struct NvEncSequenceParamPayload {
 // ── Function table ────────────────────────────────────────────────────
 
 /// The NVENC function table, populated by NvEncodeAPICreateInstance.
-/// This matches the NV_ENCODE_API_FUNCTION_LIST layout from nvEncodeAPI.h.
+/// This matches the NV_ENCODE_API_FUNCTION_LIST layout from nvEncodeAPI.h (SDK 12.x/13.0).
+///
+/// CRITICAL: The field order MUST match the SDK header exactly. The SDK order is:
+///   nvEncOpenEncodeSession, nvEncGetEncodeGUIDCount, nvEncGetEncodeProfileGUIDCount,
+///   nvEncGetEncodeProfileGUIDs, nvEncGetEncodeGUIDs, nvEncGetInputFormatCount, ...
+/// Note: ProfileGUID functions come BEFORE GetEncodeGUIDs in the SDK layout!
 #[repr(C)]
 pub struct NvEncFunctionList {
     pub version: u32,
     pub reserved: u32,
     // Function pointers filled by NvEncodeAPICreateInstance
+    // [0] nvEncOpenEncodeSession (legacy)
     pub nv_enc_open_encode_session: Option<unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> NvencStatus>,
+    // [1] nvEncGetEncodeGUIDCount
     pub nv_enc_get_encode_guid_count: Option<unsafe extern "C" fn(*mut c_void, *mut u32) -> NvencStatus>,
-    pub nv_enc_get_encode_guids: Option<unsafe extern "C" fn(*mut c_void, *mut [u8; 16], u32, *mut u32) -> NvencStatus>,
+    // [2] nvEncGetEncodeProfileGUIDCount
     pub nv_enc_get_encode_profile_guid_count: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut u32) -> NvencStatus>,
+    // [3] nvEncGetEncodeProfileGUIDs
     pub nv_enc_get_encode_profile_guids: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut [u8; 16], u32, *mut u32) -> NvencStatus>,
+    // [4] nvEncGetEncodeGUIDs
+    pub nv_enc_get_encode_guids: Option<unsafe extern "C" fn(*mut c_void, *mut [u8; 16], u32, *mut u32) -> NvencStatus>,
+    // [5] nvEncGetInputFormatCount
     pub nv_enc_get_input_format_count: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut u32) -> NvencStatus>,
+    // [6] nvEncGetInputFormats
     pub nv_enc_get_input_formats: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut u32, u32, *mut u32) -> NvencStatus>,
+    // [7] nvEncGetEncodeCaps
     pub nv_enc_get_encode_caps: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut NvEncCapsParam, *mut c_int) -> NvencStatus>,
+    // [8] nvEncGetEncodePresetCount
     pub nv_enc_get_encode_preset_count: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut u32) -> NvencStatus>,
+    // [9] nvEncGetEncodePresetGUIDs
     pub nv_enc_get_encode_preset_guids: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], *mut [u8; 16], u32, *mut u32) -> NvencStatus>,
+    // [10] nvEncGetEncodePresetConfig (legacy)
     pub nv_enc_get_encode_preset_config: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], [u8; 16], *mut c_void) -> NvencStatus>,
+    // [11] nvEncInitializeEncoder
     pub nv_enc_initialize_encoder: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [12] nvEncCreateInputBuffer
     pub nv_enc_create_input_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncCreateInputBuffer) -> NvencStatus>,
+    // [13] nvEncDestroyInputBuffer
     pub nv_enc_destroy_input_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [14] nvEncCreateBitstreamBuffer
     pub nv_enc_create_bitstream_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncCreateBitstreamBuffer) -> NvencStatus>,
+    // [15] nvEncDestroyBitstreamBuffer
     pub nv_enc_destroy_bitstream_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [16] nvEncEncodePicture
     pub nv_enc_encode_picture: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [17] nvEncLockBitstream
     pub nv_enc_lock_bitstream: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncLockBitstream) -> NvencStatus>,
+    // [18] nvEncUnlockBitstream
     pub nv_enc_unlock_bitstream: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [19] nvEncLockInputBuffer
     pub nv_enc_lock_input_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncLockInputBuffer) -> NvencStatus>,
+    // [20] nvEncUnlockInputBuffer
     pub nv_enc_unlock_input_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [21] nvEncGetEncodeStats
     pub nv_enc_get_encode_stats: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [22] nvEncGetSequenceParams
     pub nv_enc_get_sequence_params: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncSequenceParamPayload) -> NvencStatus>,
+    // [23] nvEncRegisterAsyncEvent
     pub nv_enc_register_async_event: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [24] nvEncUnregisterAsyncEvent
     pub nv_enc_unregister_async_event: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [25] nvEncMapInputResource
     pub nv_enc_map_input_resource: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncMapInputResource) -> NvencStatus>,
+    // [26] nvEncUnmapInputResource
     pub nv_enc_unmap_input_resource: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [27] nvEncDestroyEncoder
     pub nv_enc_destroy_encoder: Option<unsafe extern "C" fn(*mut c_void) -> NvencStatus>,
+    // [28] nvEncInvalidateRefFrames
     pub nv_enc_invalidate_ref_frames: Option<unsafe extern "C" fn(*mut c_void, u64) -> NvencStatus>,
+    // [29] nvEncOpenEncodeSessionEx
     pub nv_enc_open_encode_session_ex: Option<unsafe extern "C" fn(*mut NvEncOpenEncodeSessionExParams, *mut *mut c_void) -> NvencStatus>,
+    // [30] nvEncRegisterResource
     pub nv_enc_register_resource: Option<unsafe extern "C" fn(*mut c_void, *mut NvEncRegisterResource) -> NvencStatus>,
+    // [31] nvEncUnregisterResource
     pub nv_enc_unregister_resource: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [32] nvEncReconfigureEncoder
     pub nv_enc_reconfigure_encoder: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
-    // Reserved function pointers (the struct may have more in newer API versions)
+    // [33] reserved1
     pub reserved1: *mut c_void,
-    pub reserved2: [*mut c_void; 277],
+    // [34] nvEncCreateMVBuffer
+    pub nv_enc_create_mv_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [35] nvEncDestroyMVBuffer
+    pub nv_enc_destroy_mv_buffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [36] nvEncRunMotionEstimationOnly
+    pub nv_enc_run_motion_estimation_only: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // [37] nvEncGetLastErrorString
+    pub nv_enc_get_last_error_string: Option<unsafe extern "C" fn(*mut c_void) -> *const u8>,
+    // [38] nvEncSetIOCudaStreams
+    pub nv_enc_set_io_cuda_streams: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> NvencStatus>,
+    // [39] nvEncGetEncodePresetConfigEx
+    pub nv_enc_get_encode_preset_config_ex: Option<unsafe extern "C" fn(*mut c_void, [u8; 16], [u8; 16], u32, *mut c_void) -> NvencStatus>,
+    // [40] nvEncGetSequenceParamEx
+    pub nv_enc_get_sequence_param_ex: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> NvencStatus>,
+    // Reserved function pointers (the struct may have more in newer API versions)
+    pub reserved2: [*mut c_void; 275],
 }
 
 /// Type for the NvEncodeAPICreateInstance entry point.
@@ -241,6 +305,9 @@ pub struct NvencDriver {
     _lib: Library,
     func_list: NvEncFunctionList,
     max_supported_version: u32,
+    /// NVENCAPI_VERSION computed from the driver's max supported version.
+    /// Format: major | (minor << 24).
+    api_version: u32,
 }
 
 // SAFETY: The NVENC library handles are valid across threads when used with
@@ -270,23 +337,19 @@ impl NvencDriver {
             }
             info!("NVENC max supported version: {}.{}", max_version >> 4, max_version & 0xF);
 
-            // Check that our target version is supported
-            // GetMaxSupportedVersion returns (major << 4) | minor format
-            let our_max_format: u32 = (12 << 4) | 2; // 12.2
-            if our_max_format > max_version {
-                warn!(
-                    "NVENC API version 12.2 requested but max supported is {}.{}, proceeding anyway",
-                    max_version >> 4, max_version & 0xF
-                );
-            }
+            // Convert max_version from (major << 4 | minor) to NVENCAPI_VERSION (major | minor << 24)
+            let major = max_version >> 4;
+            let minor = max_version & 0xF;
+            let api_version = major | (minor << 24);
+            info!("using NVENCAPI_VERSION={:#010x} (driver {}.{})", api_version, major, minor);
 
-            // Create and populate the function list
+            // Create and populate the function list using the driver's actual API version
             let create_instance: Symbol<FnNvEncodeAPICreateInstance> = lib
                 .get(b"NvEncodeAPICreateInstance")
                 .map_err(|e| format!("NvEncodeAPICreateInstance not found: {}", e))?;
 
             let mut func_list: NvEncFunctionList = std::mem::zeroed();
-            func_list.version = nvenc_struct_version(2); // NV_ENCODE_API_FUNCTION_LIST_VER
+            func_list.version = nvenc_struct_version_with_api(api_version, 2); // NV_ENCODE_API_FUNCTION_LIST_VER
 
             let res = create_instance(&mut func_list);
             if res != NV_ENC_SUCCESS {
@@ -303,6 +366,7 @@ impl NvencDriver {
                 _lib: lib,
                 func_list,
                 max_supported_version: max_version,
+                api_version,
             }))
         }
     }
@@ -343,6 +407,41 @@ impl NvencDriver {
         self.max_supported_version
     }
 
+    /// Get the NVENCAPI_VERSION (major | minor << 24) used by this driver.
+    pub fn api_version(&self) -> u32 {
+        self.api_version
+    }
+
+    /// Patch an NVENC struct version field in raw bytes to use this driver's API version.
+    ///
+    /// NVENC version fields have the format:
+    ///   `api_version | (struct_ver << 16) | (0x7 << 28) [| (1 << 31)]`
+    ///
+    /// When a client compiled against a different SDK version (e.g. 12.2) sends structs
+    /// to a server with a different SDK version (e.g. 13.0), the API version component
+    /// must be patched to match the server's driver version.
+    pub fn patch_struct_version(&self, data: &mut [u8], offset: usize) {
+        if data.len() < offset + 4 {
+            return;
+        }
+        let old_ver = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        ]);
+        if old_ver == 0 {
+            return; // uninitialized field, skip
+        }
+        // Extract struct version number (bits 16-23 only, NOT bits 24-27 which are minor API version)
+        let struct_ver = (old_ver >> 16) & 0xFF;
+        let super_flag = old_ver & (1u32 << 31);
+        // Recompute with this driver's API version
+        let new_ver = self.api_version | (struct_ver << 16) | (0x7u32 << 28) | super_flag;
+        data[offset..offset + 4].copy_from_slice(&new_ver.to_le_bytes());
+        tracing::error!(
+            "NVENC version patch: offset={}, {:#010x} -> {:#010x}",
+            offset, old_ver, new_ver
+        );
+    }
+
     // ── Session management ───────────────────────────────────────
 
     /// Open an encode session using a CUDA context.
@@ -357,10 +456,10 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncOpenEncodeSessionExParams = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(1);
+        params.version = self.struct_ver(1);
         params.device_type = device_type;
         params.device = cuda_context;
-        params.api_version = NVENCAPI_VERSION;
+        params.api_version = self.api_version;
 
         let mut encoder: *mut c_void = std::ptr::null_mut();
         let res = unsafe { func(&mut params, &mut encoder) };
@@ -464,7 +563,58 @@ impl NvencDriver {
         }
     }
 
-    /// Get preset configuration for a codec/preset combination.
+    /// Helper to compute struct version using the driver's actual API version.
+    fn struct_ver(&self, ver: u32) -> u32 {
+        nvenc_struct_version_with_api(self.api_version, ver)
+    }
+
+    /// Prepare a versioned NV_ENC_PRESET_CONFIG buffer with correct nested struct versions.
+    ///
+    /// IMPORTANT: On 64-bit, NV_ENC_CONFIG has 8-byte alignment (due to void* reserved2[64]),
+    /// so there are 4 bytes of padding between NV_ENC_PRESET_CONFIG.version and NV_ENC_CONFIG.
+    ///
+    /// Buffer layout (64-bit):
+    ///   [0..4]   NV_ENC_PRESET_CONFIG.version
+    ///   [4..8]   padding (alignment to 8 for NV_ENC_CONFIG)
+    ///   [8..12]  NV_ENC_CONFIG.version
+    ///   [12..28] NV_ENC_CONFIG.profileGUID (16 bytes)
+    ///   [28..32] gopLength
+    ///   [32..36] frameIntervalP
+    ///   [36..40] monoChromeEncoding
+    ///   [40..44] frameFieldMode
+    ///   [44..48] mvPrecision
+    ///   [48..]   NV_ENC_RC_PARAMS (8-byte aligned: 8+40=48)
+    ///     [48..52] NV_ENC_RC_PARAMS.version
+    fn prepare_preset_config_buf(&self) -> Vec<u8> {
+        const PRESET_CONFIG_BUF_SIZE: usize = 4096;
+        let mut config_buf = vec![0u8; PRESET_CONFIG_BUF_SIZE];
+
+        // On 64-bit, NV_ENC_CONFIG requires 8-byte alignment (void* reserved2[64]).
+        // After the 4-byte version field, there are 4 bytes of padding.
+        const CONFIG_OFFSET: usize = 8; // NV_ENC_CONFIG starts at offset 8 (aligned to 8)
+
+        // Offset 0: NV_ENC_PRESET_CONFIG.version (struct ver 5, super struct flag)
+        let preset_ver = self.struct_ver(5) | (1 << 31);
+        config_buf[0..4].copy_from_slice(&preset_ver.to_le_bytes());
+
+        // Offset 8: NV_ENC_CONFIG.version (struct ver 9, super struct flag)
+        let config_ver = self.struct_ver(9) | (1 << 31);
+        config_buf[CONFIG_OFFSET..CONFIG_OFFSET + 4].copy_from_slice(&config_ver.to_le_bytes());
+
+        // NV_ENC_RC_PARAMS starts at NV_ENC_CONFIG offset 40:
+        //   version(4) + profileGUID(16) + gopLength(4) + frameIntervalP(4) +
+        //   monoChromeEncoding(4) + frameFieldMode(4) + mvPrecision(4) = 40
+        // NV_ENC_RC_PARAMS has 8-byte alignment (void* reserved2[2]), 40 is 8-aligned.
+        const RC_PARAMS_OFFSET: usize = CONFIG_OFFSET + 40; // = 48
+
+        // Offset 48: NV_ENC_RC_PARAMS.version (struct ver 1, no super flag)
+        let rc_params_ver = self.struct_ver(1);
+        config_buf[RC_PARAMS_OFFSET..RC_PARAMS_OFFSET + 4].copy_from_slice(&rc_params_ver.to_le_bytes());
+
+        config_buf
+    }
+
+    /// Get preset configuration for a codec/preset combination (legacy).
     /// Returns the raw preset config bytes.
     pub fn get_encode_preset_config(
         &self,
@@ -477,14 +627,7 @@ impl NvencDriver {
             .nv_enc_get_encode_preset_config
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
-        // Allocate a buffer for NV_ENC_PRESET_CONFIG (large enough for any version).
-        // The struct is versioned and can vary in size, so we use a generous buffer.
-        const PRESET_CONFIG_BUF_SIZE: usize = 8192;
-        let mut config_buf = vec![0u8; PRESET_CONFIG_BUF_SIZE];
-        // Set version at the start of the buffer
-        // NV_ENC_PRESET_CONFIG_VER = NVENCAPI_STRUCT_VERSION(4) | (1<<31)
-        let version = nvenc_struct_version(4) | (1 << 31);
-        config_buf[0..4].copy_from_slice(&version.to_le_bytes());
+        let mut config_buf = self.prepare_preset_config_buf();
 
         let res = unsafe {
             func(
@@ -494,6 +637,64 @@ impl NvencDriver {
                 config_buf.as_mut_ptr() as *mut c_void,
             )
         };
+        if res == NV_ENC_SUCCESS {
+            Ok(config_buf)
+        } else {
+            Err(res)
+        }
+    }
+
+    /// Get preset configuration with tuning info (Ex version).
+    /// Returns the raw preset config bytes.
+    pub fn get_encode_preset_config_ex(
+        &self,
+        encoder: *mut c_void,
+        encode_guid: [u8; 16],
+        preset_guid: [u8; 16],
+        tuning_info: u32,
+    ) -> Result<Vec<u8>, NvencStatus> {
+        let func = self
+            .func_list
+            .nv_enc_get_encode_preset_config_ex
+            .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
+
+        let mut config_buf = self.prepare_preset_config_buf();
+
+        // Debug: log exact version values at correct offsets
+        let preset_ver = u32::from_le_bytes([config_buf[0], config_buf[1], config_buf[2], config_buf[3]]);
+        let config_ver = u32::from_le_bytes([config_buf[8], config_buf[9], config_buf[10], config_buf[11]]);
+        let rc_params_ver = u32::from_le_bytes([config_buf[48], config_buf[49], config_buf[50], config_buf[51]]);
+        tracing::error!(
+            "NvEnc GetEncodePresetConfigEx: calling real driver, encoder={:p}, tuning={}, \
+             preset_ver[0]={:#010x}, config_ver[8]={:#010x}, rc_ver[48]={:#010x}",
+            encoder, tuning_info, preset_ver, config_ver, rc_params_ver
+        );
+
+        let res = unsafe {
+            func(
+                encoder,
+                encode_guid,
+                preset_guid,
+                tuning_info,
+                config_buf.as_mut_ptr() as *mut c_void,
+            )
+        };
+
+        // On error, try to get the driver's error string for more details
+        if res != NV_ENC_SUCCESS {
+            if let Some(err_func) = self.func_list.nv_enc_get_last_error_string {
+                let err_str_ptr = unsafe { err_func(encoder) };
+                if !err_str_ptr.is_null() {
+                    let err_str = unsafe { std::ffi::CStr::from_ptr(err_str_ptr as *const i8) };
+                    tracing::error!(
+                        "NvEnc GetEncodePresetConfigEx: driver error string: {:?}, status={}",
+                        err_str, res
+                    );
+                }
+            } else {
+                tracing::error!("NvEnc GetEncodePresetConfigEx: real driver returned status={}", res);
+            }
+        }
         if res == NV_ENC_SUCCESS {
             Ok(config_buf)
         } else {
@@ -514,7 +715,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut caps_param: NvEncCapsParam = unsafe { std::mem::zeroed() };
-        caps_param.version = nvenc_struct_version(1);
+        caps_param.version = self.struct_ver(1);
         caps_param.caps_to_query = caps_to_query;
 
         let mut caps_val: c_int = 0;
@@ -572,6 +773,19 @@ impl NvencDriver {
 
     // ── Encoder initialization ───────────────────────────────────
 
+    /// Get the last error string from the NVENC driver for a given encoder session.
+    pub fn get_last_error_string(&self, encoder: *mut c_void) -> Option<String> {
+        let func = self.func_list.nv_enc_get_last_error_string?;
+        unsafe {
+            let ptr = func(encoder);
+            if ptr.is_null() {
+                return None;
+            }
+            let cstr = std::ffi::CStr::from_ptr(ptr as *const i8);
+            Some(cstr.to_string_lossy().into_owned())
+        }
+    }
+
     /// Initialize the encoder with raw parameter bytes.
     /// The caller is responsible for providing a properly versioned NV_ENC_INITIALIZE_PARAMS struct.
     pub fn initialize_encoder(
@@ -615,7 +829,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncCreateInputBuffer = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(1);
+        params.version = self.struct_ver(2); // NV_ENC_CREATE_INPUT_BUFFER_VER
         params.width = width;
         params.height = height;
         params.buffer_fmt = buffer_fmt;
@@ -653,7 +867,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncLockInputBuffer = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(1);
+        params.version = self.struct_ver(1);
         params.input_buffer = buffer;
 
         let res = unsafe { func(encoder, &mut params) };
@@ -690,9 +904,12 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncCreateBitstreamBuffer = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(1);
+        params.version = self.struct_ver(1);
 
         let res = unsafe { func(encoder, &mut params) };
+
+        debug!("CreateBitstreamBuffer: res={} bitstream_buffer={:?}", res, params.bitstream_buffer);
+
         if res == NV_ENC_SUCCESS {
             Ok(params.bitstream_buffer)
         } else {
@@ -725,7 +942,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncLockBitstream = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(1);
+        params.version = self.struct_ver(2); // NV_ENC_LOCK_BITSTREAM_VER (no super flag)
         params.output_bitstream = bitstream_buffer;
 
         let res = unsafe { func(encoder, &mut params) };
@@ -788,7 +1005,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncRegisterResource = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(4); // NV_ENC_REGISTER_RESOURCE_VER
+        params.version = self.struct_ver(5); // NV_ENC_REGISTER_RESOURCE_VER
         params.resource_type = resource_type;
         params.resource_to_register = resource;
         params.width = width;
@@ -829,7 +1046,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut params: NvEncMapInputResource = unsafe { std::mem::zeroed() };
-        params.version = nvenc_struct_version(4); // NV_ENC_MAP_INPUT_RESOURCE_VER
+        params.version = self.struct_ver(4); // NV_ENC_MAP_INPUT_RESOURCE_VER
         params.input_resource = registered_resource;
 
         let res = unsafe { func(encoder, &mut params) };
@@ -882,7 +1099,7 @@ impl NvencDriver {
             .ok_or(NV_ENC_ERR_UNIMPLEMENTED)?;
 
         let mut payload: NvEncSequenceParamPayload = unsafe { std::mem::zeroed() };
-        payload.version = nvenc_struct_version(1);
+        payload.version = self.struct_ver(1);
 
         // Allocate buffer for SPS/PPS data
         const MAX_SPS_PPS_SIZE: usize = 1024;
@@ -915,7 +1132,7 @@ impl NvencDriver {
         // NV_ENC_STAT has a versioned header. Allocate generously.
         const STATS_BUF_SIZE: usize = 4096;
         let mut stats_buf = vec![0u8; STATS_BUF_SIZE];
-        let version = nvenc_struct_version(1);
+        let version = self.struct_ver(2); // NV_ENC_STAT_VER
         stats_buf[0..4].copy_from_slice(&version.to_le_bytes());
 
         let res = unsafe { func(encoder, stats_buf.as_mut_ptr() as *mut c_void) };

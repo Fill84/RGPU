@@ -59,6 +59,15 @@ pub enum NvencCommand {
         preset_guid: NvGuid,
     },
 
+    /// Get preset configuration with tuning info (Ex version).
+    GetEncodePresetConfigEx {
+        encoder: NetworkHandle,
+        encode_guid: NvGuid,
+        preset_guid: NvGuid,
+        /// NV_ENC_TUNING_INFO value (1=high_quality, 2=low_latency, etc.).
+        tuning_info: u32,
+    },
+
     /// Query encoder capabilities for a specific attribute.
     GetEncodeCaps {
         encoder: NetworkHandle,
@@ -83,8 +92,11 @@ pub enum NvencCommand {
     /// Initialize the encoder with parameters.
     InitializeEncoder {
         encoder: NetworkHandle,
-        /// Serialized NV_ENC_INITIALIZE_PARAMS as raw bytes.
+        /// Serialized NV_ENC_INITIALIZE_PARAMS as raw bytes (encodeConfig pointer zeroed).
         params: Vec<u8>,
+        /// Serialized NV_ENC_CONFIG pointed to by encodeConfig, if non-null.
+        /// The server will patch the encodeConfig pointer to point to this data.
+        encode_config: Option<Vec<u8>>,
     },
 
     /// Reconfigure encoder dynamically.

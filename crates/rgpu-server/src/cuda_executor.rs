@@ -39,6 +39,10 @@ pub struct CudaExecutor {
     mempool_handles: DashMap<NetworkHandle, cuda_driver::CUmemoryPool>,
     /// Maps NetworkHandle -> real CUlinkState pointer
     linker_handles: DashMap<NetworkHandle, cuda_driver::CUlinkState>,
+    /// Per-session current CUDA context tracking.
+    /// CUDA context state is thread-local, but tokio migrates tasks between threads.
+    /// We track each session's current context and re-establish it before each command.
+    session_current_ctx: DashMap<u32, cuda_driver::CUcontext>,
 }
 
 // SAFETY: CUDA driver pointers are valid across threads when used with proper context management
@@ -84,6 +88,7 @@ impl CudaExecutor {
             host_memory_handles: DashMap::new(),
             mempool_handles: DashMap::new(),
             linker_handles: DashMap::new(),
+            session_current_ctx: DashMap::new(),
         }
     }
 
@@ -103,8 +108,29 @@ impl CudaExecutor {
         }
     }
 
+    /// Re-establish the CUDA context for a session on the current thread.
+    /// This is needed because tokio may migrate async tasks between OS threads,
+    /// and CUDA context state is thread-local.
+    fn ensure_session_context(&self, session: &Session) {
+        if let Some(d) = &self.driver {
+            if let Some(ctx) = self.session_current_ctx.get(&session.session_id) {
+                let _ = d.ctx_set_current(*ctx);
+            }
+        }
+    }
+
     /// Execute a CUDA command and return the response.
     pub fn execute(&self, session: &Session, cmd: CudaCommand) -> CudaResponse {
+        // Re-establish the CUDA context for this session on the current thread.
+        // Skip for commands that don't need a context (Init, DriverGetVersion, DeviceGet*).
+        match &cmd {
+            CudaCommand::Init { .. }
+            | CudaCommand::DriverGetVersion
+            | CudaCommand::DeviceGetCount
+            | CudaCommand::DeviceGet { .. } => {}
+            _ => self.ensure_session_context(session),
+        }
+
         match cmd {
             CudaCommand::Init { flags } => {
                 info!(
@@ -554,6 +580,8 @@ impl CudaExecutor {
                     Ok(ctx) => {
                         let handle = session.alloc_handle(ResourceType::CuContext);
                         self.context_handles.insert(handle, ctx);
+                        // Track as current context for this session
+                        self.session_current_ctx.insert(session.session_id, ctx);
                         debug!(
                             session_id = session.session_id,
                             "CtxCreate(device={:?}) -> {:?}", device, handle
@@ -593,19 +621,31 @@ impl CudaExecutor {
                     Err(e) => return e,
                 };
 
-                match self.context_handles.get(&ctx) {
-                    Some(real_ctx) => {
-                        let res = d.ctx_set_current(*real_ctx);
-                        if res == CUDA_SUCCESS {
-                            CudaResponse::Success
-                        } else {
-                            Self::cuda_err(res)
-                        }
+                // Handle null context (detach current context)
+                if ctx.is_null() {
+                    let res = d.ctx_set_current(std::ptr::null_mut());
+                    if res == CUDA_SUCCESS {
+                        self.session_current_ctx.remove(&session.session_id);
+                        CudaResponse::Success
+                    } else {
+                        Self::cuda_err(res)
                     }
-                    None => CudaResponse::Error {
-                        code: 201,
-                        message: "invalid context handle".to_string(),
-                    },
+                } else {
+                    match self.context_handles.get(&ctx) {
+                        Some(real_ctx) => {
+                            let res = d.ctx_set_current(*real_ctx);
+                            if res == CUDA_SUCCESS {
+                                self.session_current_ctx.insert(session.session_id, *real_ctx);
+                                CudaResponse::Success
+                            } else {
+                                Self::cuda_err(res)
+                            }
+                        }
+                        None => CudaResponse::Error {
+                            code: 201,
+                            message: "invalid context handle".to_string(),
+                        },
+                    }
                 }
             }
 
@@ -658,8 +698,11 @@ impl CudaExecutor {
                         message: "invalid context handle".to_string(),
                     },
                 };
-                let res = d.ctx_push_current(real_ctx);
+                // Use cuCtxSetCurrent instead of cuCtxPushCurrent to avoid
+                // thread-local stack issues with async runtimes
+                let res = d.ctx_set_current(real_ctx);
                 if res == CUDA_SUCCESS {
+                    self.session_current_ctx.insert(session.session_id, real_ctx);
                     CudaResponse::Success
                 } else {
                     Self::cuda_err(res)
@@ -671,15 +714,30 @@ impl CudaExecutor {
                     Ok(d) => d,
                     Err(e) => return e,
                 };
+                // Instead of relying on the thread-local context stack, use
+                // our session-tracked current context
+                if let Some(ctx_entry) = self.session_current_ctx.get(&session.session_id) {
+                    let ctx = *ctx_entry;
+                    drop(ctx_entry);
+                    // Find the handle for this context
+                    for entry in self.context_handles.iter() {
+                        if *entry.value() == ctx {
+                            // Detach context
+                            let _ = d.ctx_set_current(std::ptr::null_mut());
+                            self.session_current_ctx.remove(&session.session_id);
+                            return CudaResponse::Context(*entry.key());
+                        }
+                    }
+                }
+                // No tracked context — try real pop as fallback
                 match d.ctx_pop_current() {
                     Ok(ctx) => {
-                        // Find the handle for this context
+                        self.session_current_ctx.remove(&session.session_id);
                         for entry in self.context_handles.iter() {
                             if *entry.value() == ctx {
                                 return CudaResponse::Context(*entry.key());
                             }
                         }
-                        // Context not tracked - create a handle for it
                         let handle = session.alloc_handle(ResourceType::CuContext);
                         self.context_handles.insert(handle, ctx);
                         CudaResponse::Context(handle)
@@ -2860,6 +2918,12 @@ impl CudaExecutor {
         }
     }
 
+    /// Get a reference to the CUDA driver, if loaded.
+    /// Used by NvencExecutor to set CUDA context before NVENC calls.
+    pub fn driver_ref(&self) -> Option<&CudaDriver> {
+        self.driver.as_deref()
+    }
+
     /// Resolve a CUDA context NetworkHandle to a real CUcontext pointer.
     /// Used by NvencExecutor to get the real CUDA context for encoding sessions.
     pub fn get_context_ptr(&self, handle: &NetworkHandle) -> Option<*mut c_void> {
@@ -2875,6 +2939,9 @@ impl CudaExecutor {
     /// Clean up all GPU resources owned by a disconnecting session.
     /// Destroys resources in reverse-dependency order to avoid dangling references.
     pub fn cleanup_session(&self, session: &Session) {
+        // Remove per-session context tracking
+        self.session_current_ctx.remove(&session.session_id);
+
         let handles = session.all_handles();
         if handles.is_empty() {
             return;

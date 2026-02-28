@@ -14,6 +14,7 @@ pub mod error;
 pub mod proc_address;
 pub mod stubs;
 
+use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::OnceLock;
 
@@ -39,9 +40,42 @@ type CUmemoryPool = *mut c_void;
 const CUDA_SUCCESS: CUresult = 0;
 const CUDA_ERROR_INVALID_VALUE: CUresult = 1;
 const _CUDA_ERROR_NOT_INITIALIZED: CUresult = 3;
+const CUDA_ERROR_INVALID_CONTEXT: CUresult = 201;
 const CUDA_ERROR_NOT_READY: CUresult = 600;
 const _CUDA_ERROR_NOT_SUPPORTED: CUresult = 801;
 const CUDA_ERROR_UNKNOWN: CUresult = 999;
+
+// ── Thread-local CUDA context stack ─────────────────────────────────
+// CUDA maintains a per-thread context stack. We track it locally to avoid
+// relying on the server's thread-local state (which breaks with async runtimes).
+thread_local! {
+    static CTX_STACK: RefCell<Vec<u64>> = RefCell::new(Vec::new());
+}
+
+fn ctx_stack_push(local_id: u64) {
+    CTX_STACK.with(|s| s.borrow_mut().push(local_id));
+}
+
+fn ctx_stack_pop() -> Option<u64> {
+    CTX_STACK.with(|s| s.borrow_mut().pop())
+}
+
+fn ctx_stack_top() -> Option<u64> {
+    CTX_STACK.with(|s| s.borrow().last().copied())
+}
+
+/// Send CtxSetCurrent to the server for the given local context id.
+/// If local_id is None, sends a null context (detach).
+fn sync_server_context(local_id: Option<u64>) {
+    let net_handle = match local_id {
+        Some(id) => match handle_store::get_ctx(id) {
+            Some(h) => h,
+            None => NetworkHandle::null(),
+        },
+        None => NetworkHandle::null(),
+    };
+    let _ = send_cuda_command(CudaCommand::CtxSetCurrent { ctx: net_handle });
+}
 
 static IPC_CLIENT: OnceLock<IpcClient> = OnceLock::new();
 
@@ -82,6 +116,46 @@ fn null_stream_handle() -> NetworkHandle {
 #[no_mangle]
 pub extern "C" fn rgpu_interpose_marker() -> c_int {
     1
+}
+
+// ── Cross-DLL handle resolution ─────────────────────────────────────
+// These functions allow other RGPU interpose DLLs (NVENC, NVDEC) in the
+// same process to resolve local handle IDs to proper NetworkHandles.
+
+#[no_mangle]
+pub unsafe extern "C" fn rgpu_cuda_resolve_ctx(
+    local_id: u64,
+    out_server_id: *mut u16,
+    out_session_id: *mut u32,
+    out_resource_id: *mut u64,
+) -> c_int {
+    match handle_store::get_ctx(local_id) {
+        Some(h) => {
+            if !out_server_id.is_null() { *out_server_id = h.server_id; }
+            if !out_session_id.is_null() { *out_session_id = h.session_id; }
+            if !out_resource_id.is_null() { *out_resource_id = h.resource_id; }
+            1
+        }
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rgpu_cuda_resolve_mem(
+    local_id: u64,
+    out_server_id: *mut u16,
+    out_session_id: *mut u32,
+    out_resource_id: *mut u64,
+) -> c_int {
+    match handle_store::get_mem(local_id) {
+        Some(h) => {
+            if !out_server_id.is_null() { *out_server_id = h.server_id; }
+            if !out_session_id.is_null() { *out_session_id = h.session_id; }
+            if !out_resource_id.is_null() { *out_resource_id = h.resource_id; }
+            1
+        }
+        None => 0,
+    }
 }
 
 // ── Exported CUDA Driver API Functions ──────────────────────────────
@@ -298,6 +372,8 @@ pub unsafe extern "C" fn cuCtxCreate_v2(
     }) {
         CudaResponse::Context(handle) => {
             let local_id = handle_store::store_ctx(handle);
+            // cuCtxCreate pushes the new context onto the thread's context stack
+            ctx_stack_push(local_id);
             *pctx = local_id as CUcontext;
             CUDA_SUCCESS
         }
@@ -319,6 +395,11 @@ pub unsafe extern "C" fn cuCtxDestroy_v2(ctx: CUcontext) -> CUresult {
     match send_cuda_command(CudaCommand::CtxDestroy { ctx: net_handle }) {
         CudaResponse::Success => {
             handle_store::remove_ctx(local_id);
+            // Remove from context stack if present
+            CTX_STACK.with(|s| {
+                let mut stack = s.borrow_mut();
+                stack.retain(|&id| id != local_id);
+            });
             CUDA_SUCCESS
         }
         CudaResponse::Error { code, .. } => code,
@@ -329,12 +410,36 @@ pub unsafe extern "C" fn cuCtxDestroy_v2(ctx: CUcontext) -> CUresult {
 #[no_mangle]
 pub unsafe extern "C" fn cuCtxSetCurrent(ctx: CUcontext) -> CUresult {
     let local_id = ctx as u64;
+
+    if ctx.is_null() {
+        // Setting null context — pop the stack top without removing lower entries
+        CTX_STACK.with(|s| {
+            let mut stack = s.borrow_mut();
+            if !stack.is_empty() {
+                let len = stack.len();
+                stack[len - 1] = 0; // mark top as null
+            }
+        });
+        let _ = send_cuda_command(CudaCommand::CtxSetCurrent { ctx: NetworkHandle::null() });
+        return CUDA_SUCCESS;
+    }
+
     let net_handle = match handle_store::get_ctx(local_id) {
         Some(h) => h,
         None => {
             return CUDA_ERROR_INVALID_VALUE;
         }
     };
+
+    // Replace the top of the context stack
+    CTX_STACK.with(|s| {
+        let mut stack = s.borrow_mut();
+        if let Some(last) = stack.last_mut() {
+            *last = local_id;
+        } else {
+            stack.push(local_id);
+        }
+    });
 
     match send_cuda_command(CudaCommand::CtxSetCurrent { ctx: net_handle }) {
         CudaResponse::Success => CUDA_SUCCESS,
@@ -349,15 +454,16 @@ pub unsafe extern "C" fn cuCtxGetCurrent(pctx: *mut CUcontext) -> CUresult {
         return CUDA_ERROR_INVALID_VALUE;
     }
 
-    match send_cuda_command(CudaCommand::CtxGetCurrent) {
-        CudaResponse::Context(handle) => {
-            let local_id = handle_store::store_ctx(handle);
-            *pctx = local_id as CUcontext;
-            CUDA_SUCCESS
+    // Return from local context stack — no IPC round-trip needed
+    match ctx_stack_top() {
+        Some(id) if id != 0 => {
+            *pctx = id as CUcontext;
         }
-        CudaResponse::Error { code, .. } => code,
-        _ => CUDA_ERROR_UNKNOWN,
+        _ => {
+            *pctx = std::ptr::null_mut();
+        }
     }
+    CUDA_SUCCESS
 }
 
 #[no_mangle]
@@ -1019,8 +1125,12 @@ pub unsafe extern "C" fn cuDevicePrimaryCtxSetFlags_v2(dev: CUdevice, flags: c_u
 
 #[no_mangle]
 pub unsafe extern "C" fn cuCtxPushCurrent_v2(ctx: CUcontext) -> CUresult {
-    let net_h = match handle_store::get_ctx(ctx as u64) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
-    match send_cuda_command(CudaCommand::CtxPushCurrent { ctx: net_h }) {
+    let local_id = ctx as u64;
+    let net_h = match handle_store::get_ctx(local_id) { Some(h) => h, None => return CUDA_ERROR_INVALID_VALUE };
+    // Push onto local context stack
+    ctx_stack_push(local_id);
+    // Tell the server to set this as the current context
+    match send_cuda_command(CudaCommand::CtxSetCurrent { ctx: net_h }) {
         CudaResponse::Success => CUDA_SUCCESS,
         CudaResponse::Error { code, .. } => code,
         _ => CUDA_ERROR_UNKNOWN,
@@ -1029,15 +1139,23 @@ pub unsafe extern "C" fn cuCtxPushCurrent_v2(ctx: CUcontext) -> CUresult {
 
 #[no_mangle]
 pub unsafe extern "C" fn cuCtxPopCurrent_v2(pctx: *mut CUcontext) -> CUresult {
-    match send_cuda_command(CudaCommand::CtxPopCurrent) {
-        CudaResponse::Context(handle) => {
-            let id = handle_store::store_ctx(handle);
-            if !pctx.is_null() { *pctx = id as CUcontext; }
-            CUDA_SUCCESS
+    // Pop from local context stack
+    let popped_id = match ctx_stack_pop() {
+        Some(id) => id,
+        None => return CUDA_ERROR_INVALID_CONTEXT,
+    };
+
+    if !pctx.is_null() {
+        if popped_id != 0 {
+            *pctx = popped_id as CUcontext;
+        } else {
+            *pctx = std::ptr::null_mut();
         }
-        CudaResponse::Error { code, .. } => code,
-        _ => CUDA_ERROR_UNKNOWN,
     }
+
+    // Tell the server about the new current context (the new top of stack)
+    sync_server_context(ctx_stack_top().filter(|id| *id != 0));
+    CUDA_SUCCESS
 }
 
 #[no_mangle]

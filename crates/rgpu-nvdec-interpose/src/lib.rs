@@ -14,11 +14,55 @@ pub mod handle_store;
 use std::ffi::{c_int, c_uint, c_void};
 use std::sync::OnceLock;
 
-use tracing::error;
+use tracing::{debug, error};
 
+use rgpu_protocol::handle::{NetworkHandle, ResourceType};
 use rgpu_protocol::nvdec_commands::{NvdecCommand, NvdecResponse};
 
 use ipc_client::NvdecIpcClient;
+
+// ── Cross-DLL CUDA handle resolution ───────────────────────────────────
+
+type CudaResolveFn = unsafe extern "C" fn(u64, *mut u16, *mut u32, *mut u64) -> c_int;
+
+static CUDA_RESOLVE_CTX: OnceLock<Option<CudaResolveFn>> = OnceLock::new();
+
+fn load_cuda_resolve_fn(name: &[u8]) -> Option<CudaResolveFn> {
+    unsafe {
+        #[cfg(target_os = "windows")]
+        let lib_name = "nvcuda.dll";
+        #[cfg(not(target_os = "windows"))]
+        let lib_name = "libcuda.so.1";
+
+        let lib = libloading::Library::new(lib_name).ok()?;
+        let sym: libloading::Symbol<CudaResolveFn> = lib.get(name).ok()?;
+        let func = *sym;
+        std::mem::forget(lib);
+        Some(func)
+    }
+}
+
+fn resolve_cuda_ctx_handle(local_id: u64) -> Option<NetworkHandle> {
+    let func = CUDA_RESOLVE_CTX.get_or_init(|| load_cuda_resolve_fn(b"rgpu_cuda_resolve_ctx"));
+    if let Some(func) = func {
+        let mut server_id: u16 = 0;
+        let mut session_id: u32 = 0;
+        let mut resource_id: u64 = 0;
+        let result = unsafe { func(local_id, &mut server_id, &mut session_id, &mut resource_id) };
+        if result != 0 {
+            Some(NetworkHandle {
+                server_id,
+                session_id,
+                resource_id,
+                resource_type: ResourceType::CuContext,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
 
 // ── FFI types ───────────────────────────────────────────────────────────────
 
@@ -518,14 +562,16 @@ pub unsafe extern "C" fn cuvidCtxLockCreate(
         return CUDA_ERROR_INVALID_VALUE;
     }
 
-    // We need a CUDA context NetworkHandle. The context pointer from the application
-    // is a local handle ID from the CUDA interpose library. We pass it as a raw
-    // NetworkHandle with the value as resource_id, since the daemon will resolve it.
-    let ctx_handle = rgpu_protocol::handle::NetworkHandle {
-        server_id: 0,
-        session_id: 0,
-        resource_id: ctx as u64,
-        resource_type: rgpu_protocol::handle::ResourceType::CuContext,
+    // Resolve the CUDA context local ID to a proper NetworkHandle via cross-DLL lookup.
+    let ctx_handle = match resolve_cuda_ctx_handle(ctx as u64) {
+        Some(h) => {
+            debug!("NVDEC CtxLockCreate: resolved CUDA ctx -> {:?}", h);
+            h
+        }
+        None => {
+            error!("NVDEC CtxLockCreate: could not resolve CUDA context local_id={:#x}", ctx as u64);
+            return CUDA_ERROR_INVALID_VALUE;
+        }
     };
 
     let cmd = NvdecCommand::CtxLockCreate {
