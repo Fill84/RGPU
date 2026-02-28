@@ -2664,6 +2664,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dashmap",
+ "libc",
  "rgpu-common",
  "rgpu-core",
  "rgpu-protocol",
@@ -2728,6 +2729,20 @@ dependencies = [
 
 [[package]]
 name = "rgpu-nvenc-interpose"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "libloading",
+ "parking_lot",
+ "rgpu-common",
+ "rgpu-core",
+ "rgpu-protocol",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rgpu-nvml-interpose"
 version = "0.1.0"
 dependencies = [
  "dashmap",

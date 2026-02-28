@@ -45,7 +45,7 @@ fi
 # Step 2: Verify artifacts
 echo "[2/5] Verifying build artifacts..."
 MISSING=false
-for artifact in rgpu librgpu_cuda_interpose.dylib librgpu_nvenc_interpose.dylib librgpu_nvdec_interpose.dylib librgpu_vk_icd.dylib; do
+for artifact in rgpu librgpu_cuda_interpose.dylib librgpu_nvenc_interpose.dylib librgpu_nvdec_interpose.dylib librgpu_nvml_interpose.dylib librgpu_vk_icd.dylib; do
     if [ -f "$PROJECT_ROOT/target/release/${artifact}" ]; then
         SIZE=$(du -h "$PROJECT_ROOT/target/release/${artifact}" | cut -f1)
         echo "  Found: ${artifact} (${SIZE})"
@@ -73,6 +73,7 @@ cp "$PROJECT_ROOT/target/release/rgpu" "$STAGING/usr/local/bin/"
 cp "$PROJECT_ROOT/target/release/librgpu_cuda_interpose.dylib" "$STAGING/usr/local/lib/rgpu/"
 cp "$PROJECT_ROOT/target/release/librgpu_nvenc_interpose.dylib" "$STAGING/usr/local/lib/rgpu/"
 cp "$PROJECT_ROOT/target/release/librgpu_nvdec_interpose.dylib" "$STAGING/usr/local/lib/rgpu/"
+cp "$PROJECT_ROOT/target/release/librgpu_nvml_interpose.dylib" "$STAGING/usr/local/lib/rgpu/"
 cp "$PROJECT_ROOT/target/release/librgpu_vk_icd.dylib" "$STAGING/usr/local/lib/rgpu/"
 cp "$PROJECT_ROOT/packaging/config/rgpu_icd_macos.json" "$STAGING/usr/local/share/vulkan/icd.d/rgpu_icd.json"
 cp "$PROJECT_ROOT/packaging/config/rgpu.toml.template" "$STAGING/usr/local/share/rgpu/"

@@ -186,6 +186,13 @@ impl ClientDaemon {
         let total_gpus = self.cached_gpus.read().await.len();
         info!("GPU pool ready: {} GPU(s) total", total_gpus);
 
+        // Create virtual device nodes for remote GPUs (Device Manager / lspci visibility)
+        let mut device_manager = crate::device_manager::DeviceManager::new();
+        {
+            let gpus = self.cached_gpus.read().await;
+            device_manager.sync_devices(&gpus);
+        }
+
         // Spawn background reconnection task
         let reconnect_conns = self.server_conns.clone();
         let reconnect_endpoints = self.endpoints.clone();
@@ -216,10 +223,49 @@ impl ClientDaemon {
             )
         });
 
+        // Optionally start TCP IPC listener for Docker/container support
+        let tcp_ipc_future = if let Some(ref tcp_addr) = self.config.ipc_listen_address {
+            let cached_gpus = self.cached_gpus.clone();
+            let server_conns = self.server_conns.clone();
+            let endpoints = self.endpoints.clone();
+            let pool_manager = self.pool_manager.clone();
+            let local_cuda = self.local_cuda_executor.clone();
+            let local_vulkan = self.local_vulkan_executor.clone();
+            let local_nvenc = self.local_nvenc_executor.clone();
+            let local_nvdec = self.local_nvdec_executor.clone();
+            let local_session = self.local_session.clone();
+            let addr = tcp_addr.clone();
+
+            info!("starting TCP IPC listener on {} (for container access)", addr);
+
+            Some(tokio::spawn(async move {
+                if let Err(e) = crate::ipc::start_ipc_tcp_listener(&addr, move |msg| {
+                    handle_ipc_message(
+                        &cached_gpus, &server_conns, &endpoints, &pool_manager,
+                        &local_cuda, &local_vulkan, &local_nvenc, &local_nvdec, &local_session,
+                        msg,
+                    )
+                }).await {
+                    error!("TCP IPC listener error: {}", e);
+                }
+            }))
+        } else {
+            None
+        };
+
         tokio::select! {
             result = ipc_future => { result?; }
+            _ = async {
+                if let Some(handle) = tcp_ipc_future {
+                    let _ = handle.await;
+                } else {
+                    // No TCP listener configured, never completes
+                    std::future::pending::<()>().await;
+                }
+            } => {}
             _ = client_shutdown_signal() => {
                 info!("client daemon shutting down");
+                device_manager.remove_all();
             }
         }
 

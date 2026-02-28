@@ -106,6 +106,9 @@ pub async fn run_verify(config_path: &str, json: bool) -> anyhow::Result<()> {
     // Check 8: NVDEC interpose
     check_nvdec_interpose(&mut results);
 
+    // Check 9: NVML interpose
+    check_nvml_interpose(&mut results);
+
     // Output
     if json {
         print_results_json(&results);
@@ -927,6 +930,121 @@ fn check_nvdec_interpose_linux(results: &mut Vec<CheckResult>) {
     results.push(
         CheckResult::warn("NVDEC interpose", "NVDEC interpose library not found")
             .detail("Expected at: /usr/lib/rgpu/librgpu_nvdec_interpose.so")
+            .detail("Install via .deb/.rpm package"),
+    );
+}
+
+// ── Check 9: NVML Interpose ──────────────────────────────────────────────────
+
+fn check_nvml_interpose(results: &mut Vec<CheckResult>) {
+    #[cfg(windows)]
+    {
+        check_nvml_interpose_windows(results);
+    }
+    #[cfg(not(windows))]
+    {
+        check_nvml_interpose_linux(results);
+    }
+}
+
+#[cfg(windows)]
+fn check_nvml_interpose_windows(results: &mut Vec<CheckResult>) {
+    let system_root =
+        std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let nvml_path = format!(r"{}\System32\nvml.dll", system_root);
+    let backup_path = format!(r"{}\System32\nvml_real.dll", system_root);
+
+    if !std::path::Path::new(&nvml_path).exists() {
+        results.push(
+            CheckResult::warn("NVML interpose", "nvml.dll not found in System32")
+                .detail("No NVML runtime installed or RGPU not yet installed"),
+        );
+        return;
+    }
+
+    match std::fs::read(&nvml_path) {
+        Ok(data) => {
+            let marker = b"rgpu_interpose_marker";
+            if data
+                .windows(marker.len())
+                .any(|w| w == marker.as_slice())
+            {
+                let mut result = CheckResult::pass(
+                    "NVML interpose",
+                    "RGPU NVML interpose DLL installed in System32",
+                )
+                .detail(&format!("Path: {}", nvml_path));
+
+                if std::path::Path::new(&backup_path).exists() {
+                    result = result
+                        .detail("Original NVIDIA NVML backed up as nvml_real.dll");
+                } else {
+                    result = result
+                        .detail("WARNING: nvml_real.dll backup not found");
+                }
+                results.push(result);
+            } else {
+                results.push(
+                    CheckResult::warn(
+                        "NVML interpose",
+                        "nvml.dll is the original NVIDIA NVML (not RGPU interpose)",
+                    )
+                    .detail("Run the RGPU installer and select 'NVML Interpose'"),
+                );
+            }
+        }
+        Err(e) => {
+            results.push(
+                CheckResult::fail(
+                    "NVML interpose",
+                    &format!("Cannot read {}: {}", nvml_path, e),
+                )
+                .detail("You may need administrator privileges"),
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn check_nvml_interpose_linux(results: &mut Vec<CheckResult>) {
+    let paths = [
+        "/usr/lib/rgpu/librgpu_nvml_interpose.so",
+        "/usr/local/lib/rgpu/librgpu_nvml_interpose.so",
+    ];
+
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            match unsafe { libloading::Library::new(path) } {
+                Ok(lib) => {
+                    let marker: Result<
+                        libloading::Symbol<extern "C" fn() -> i32>,
+                        _,
+                    > = unsafe { lib.get(b"rgpu_interpose_marker") };
+                    if marker.is_ok() {
+                        results.push(
+                            CheckResult::pass(
+                                "NVML interpose",
+                                &format!("Found at {}", path),
+                            )
+                            .detail("nvidia-smi will see remote GPUs when this replaces libnvidia-ml.so.1"),
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    results.push(CheckResult::warn(
+                        "NVML interpose",
+                        &format!("Found at {} but cannot load: {}", path, e),
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    results.push(
+        CheckResult::warn("NVML interpose", "NVML interpose library not found")
+            .detail("Expected at: /usr/lib/rgpu/librgpu_nvml_interpose.so")
             .detail("Install via .deb/.rpm package"),
     );
 }

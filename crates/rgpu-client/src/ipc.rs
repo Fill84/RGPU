@@ -6,7 +6,94 @@ use rgpu_protocol::wire;
 
 /// IPC server that listens for connections from the Vulkan ICD and CUDA
 /// interposition library. Uses named pipes on Windows and Unix domain
-/// sockets on Linux/macOS.
+/// sockets on Linux/macOS. Also supports TCP for Docker/container access.
+
+/// TCP-based IPC listener for container support.
+/// Allows interpose libraries running inside Docker/WSL2 containers to connect
+/// to the daemon via TCP instead of Unix sockets / named pipes.
+pub async fn start_ipc_tcp_listener(
+    address: &str,
+    message_handler: impl Fn(Message) -> Option<Message> + Send + Sync + 'static,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(address).await?;
+    info!("IPC TCP listener started on {}", address);
+
+    let handler = std::sync::Arc::new(message_handler);
+
+    loop {
+        let (stream, peer_addr) = listener.accept().await?;
+        let handler = handler.clone();
+        debug!("IPC TCP client connected from {}", peer_addr);
+
+        tokio::spawn(async move {
+            let (mut reader, mut writer) = stream.into_split();
+            let mut header_buf = [0u8; wire::HEADER_SIZE];
+
+            loop {
+                match AsyncReadExt::read_exact(&mut reader, &mut header_buf).await {
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+
+                let (flags, _stream_id, payload_len) = match wire::decode_header(&header_buf) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("IPC TCP decode error: {}", e);
+                        break;
+                    }
+                };
+
+                let mut payload = vec![0u8; payload_len as usize];
+                if AsyncReadExt::read_exact(&mut reader, &mut payload)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+
+                let msg = match wire::decode_message(&payload, flags) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("IPC TCP message decode error: {}", e);
+                        continue;
+                    }
+                };
+
+                let response = match handler(msg) {
+                    Some(resp) => resp,
+                    None => {
+                        error!("IPC TCP handler returned None, sending error response");
+                        Message::CudaResponse {
+                            request_id: rgpu_protocol::messages::RequestId(0),
+                            response: rgpu_protocol::cuda_commands::CudaResponse::Error {
+                                code: 999,
+                                message: "internal daemon error".to_string(),
+                            },
+                        }
+                    }
+                };
+
+                match wire::encode_message(&response, 0) {
+                    Ok(frame) => {
+                        if AsyncWriteExt::write_all(&mut writer, &frame)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("IPC TCP encode error: {}", e);
+                    }
+                }
+            }
+
+            debug!("IPC TCP client {} disconnected", peer_addr);
+        });
+    }
+}
 
 #[cfg(unix)]
 pub async fn start_ipc_listener(

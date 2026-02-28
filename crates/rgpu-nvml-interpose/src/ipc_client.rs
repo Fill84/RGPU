@@ -1,16 +1,17 @@
 //! Synchronous IPC client for communicating with the RGPU client daemon.
-//! Adapted from the CUDA interpose IPC client for Vulkan commands.
+//! Used by the NVML interpose to query GPU information from the daemon.
+//! No command pipelining needed — NVML queries are simple request/response.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use rgpu_protocol::gpu_info::GpuInfo;
 use rgpu_protocol::messages::{Message, RequestId};
-use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
 use rgpu_protocol::wire;
 
 /// Synchronous IPC client that connects to the RGPU client daemon.
-pub struct IpcClient {
+pub struct NvmlIpcClient {
     path: String,
     next_request_id: AtomicU64,
     connection: Mutex<Option<IpcConnection>>,
@@ -28,7 +29,7 @@ struct IpcConnection {
     transport: IpcTransport,
 }
 
-impl IpcClient {
+impl NvmlIpcClient {
     pub fn new(path: &str) -> Self {
         Self {
             path: path.to_string(),
@@ -37,19 +38,16 @@ impl IpcClient {
         }
     }
 
-    /// Send a Vulkan command to the daemon and wait for the response.
-    pub fn send_command(&self, cmd: VulkanCommand) -> Result<VulkanResponse, String> {
+    /// Query the daemon for the list of available GPUs.
+    pub fn query_gpus(&self) -> Result<Vec<GpuInfo>, String> {
         let request_id = RequestId(self.next_request_id.fetch_add(1, Ordering::Relaxed));
-
-        let msg = Message::VulkanCommand {
-            request_id,
-            command: cmd,
-        };
+        let _ = request_id; // QueryGpus doesn't use request_id
+        let msg = Message::QueryGpus;
 
         let response = self.send_and_receive(msg)?;
 
         match response {
-            Message::VulkanResponse { response, .. } => Ok(response),
+            Message::GpuList(gpus) => Ok(gpus),
             Message::Error(e) => Err(e.to_string()),
             other => Err(format!("unexpected response: {:?}", other)),
         }
@@ -65,15 +63,20 @@ impl IpcClient {
         } else {
             let new_conn = IpcConnection::connect(&self.path)?;
             *conn_guard = Some(new_conn);
-            conn_guard.as_mut().expect("connection was just set to Some")
+            conn_guard
+                .as_mut()
+                .expect("connection was just set to Some")
         };
 
         if let Err(_e) = conn.write_all(&frame) {
+            // Connection lost, try reconnecting once
             drop(conn_guard);
             let mut conn_guard = self.connection.lock().map_err(|e| e.to_string())?;
             let new_conn = IpcConnection::connect(&self.path)?;
             *conn_guard = Some(new_conn);
-            let conn = conn_guard.as_mut().expect("connection was just set to Some");
+            let conn = conn_guard
+                .as_mut()
+                .expect("connection was just set to Some");
             conn.write_all(&frame).map_err(|e| e.to_string())?;
             let response = conn.read_message()?;
             return Ok(response);
@@ -110,9 +113,10 @@ impl IpcConnection {
     }
 
     fn try_connect(path: &str) -> Result<Self, String> {
-        if rgpu_common::platform::is_tcp_address(path) {
-            let stream = std::net::TcpStream::connect(path)
-                .map_err(|e| format!("TCP connect: {}", e))?;
+        // Check for TCP address (contains ':' and no pipe/socket prefix)
+        if path.contains(':') && !path.starts_with(r"\\") && !path.starts_with('/') {
+            let stream =
+                std::net::TcpStream::connect(path).map_err(|e| format!("TCP connect: {}", e))?;
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(30)))
                 .ok();
@@ -149,23 +153,33 @@ impl IpcConnection {
     fn write_all(&mut self, data: &[u8]) -> Result<(), String> {
         match &mut self.transport {
             #[cfg(unix)]
-            IpcTransport::Unix(s) => s.write_all(data),
+            IpcTransport::Unix(stream) => stream
+                .write_all(data)
+                .map_err(|e| format!("IPC write error: {}", e)),
             #[cfg(windows)]
-            IpcTransport::Pipe(p) => p.write_all(data),
-            IpcTransport::Tcp(s) => s.write_all(data),
+            IpcTransport::Pipe(pipe) => pipe
+                .write_all(data)
+                .map_err(|e| format!("IPC write error: {}", e)),
+            IpcTransport::Tcp(stream) => stream
+                .write_all(data)
+                .map_err(|e| format!("IPC write error: {}", e)),
         }
-        .map_err(|e| format!("IPC write error: {}", e))
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), String> {
         match &mut self.transport {
             #[cfg(unix)]
-            IpcTransport::Unix(s) => s.read_exact(buf),
+            IpcTransport::Unix(stream) => stream
+                .read_exact(buf)
+                .map_err(|e| format!("IPC read error: {}", e)),
             #[cfg(windows)]
-            IpcTransport::Pipe(p) => p.read_exact(buf),
-            IpcTransport::Tcp(s) => s.read_exact(buf),
+            IpcTransport::Pipe(pipe) => pipe
+                .read_exact(buf)
+                .map_err(|e| format!("IPC read error: {}", e)),
+            IpcTransport::Tcp(stream) => stream
+                .read_exact(buf)
+                .map_err(|e| format!("IPC read error: {}", e)),
         }
-        .map_err(|e| format!("IPC read error: {}", e))
     }
 
     fn read_message(&mut self) -> Result<Message, String> {

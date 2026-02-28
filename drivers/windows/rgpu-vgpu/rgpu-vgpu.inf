@@ -1,0 +1,97 @@
+;
+; rgpu-vgpu.inf - RGPU Virtual GPU Display Adapter
+;
+; This INF installs a root-enumerated virtual display adapter that
+; appears under "Display adapters" in Device Manager.
+;
+; Hardware ID: Root\RGPU_VGPU
+;
+; The driver itself is a minimal KMDF placeholder. Actual GPU work
+; is done by user-mode interpose libraries (CUDA, Vulkan, NVENC, etc).
+;
+; Copyright (c) 2026 RGPU Project
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Display
+ClassGuid   = {4d36e968-e325-11ce-bfc1-08002be10318}
+Provider    = %ManufacturerName%
+CatalogFile = rgpu-vgpu.cat
+DriverVer   = 02/28/2026,1.0.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+rgpu-vgpu.sys = 1,,
+
+; ----------------------------------------------------------------
+; Manufacturer / Models
+; ----------------------------------------------------------------
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceDesc% = RGPU_VGPU_Install, Root\RGPU_VGPU
+
+; ----------------------------------------------------------------
+; Install section
+; ----------------------------------------------------------------
+
+[RGPU_VGPU_Install.NT]
+CopyFiles = RGPU_VGPU_CopyFiles
+
+[RGPU_VGPU_CopyFiles]
+rgpu-vgpu.sys
+
+; ----------------------------------------------------------------
+; Service install
+; ----------------------------------------------------------------
+
+[RGPU_VGPU_Install.NT.Services]
+AddService = rgpuvgpu,%SPSVCINST_ASSOCSERVICE%,RGPU_VGPU_Service
+
+[RGPU_VGPU_Service]
+DisplayName    = %ServiceDesc%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\rgpu-vgpu.sys
+
+; ----------------------------------------------------------------
+; WDF co-installer section
+; ----------------------------------------------------------------
+
+[RGPU_VGPU_Install.NT.Wdf]
+KmdfService = rgpuvgpu, RGPU_VGPU_WdfSection
+
+[RGPU_VGPU_WdfSection]
+KmdfLibraryVersion = 1.33
+
+; ----------------------------------------------------------------
+; Device interface (optional, for user-mode communication)
+; ----------------------------------------------------------------
+
+[RGPU_VGPU_Install.NT.HW]
+AddReg = RGPU_VGPU_HW_AddReg
+
+[RGPU_VGPU_HW_AddReg]
+; Allow non-admin access to the device (for user-mode tools)
+HKR,,Security,,"D:P(A;;GA;;;BA)(A;;GA;;;SY)(A;;GRGW;;;BU)"
+
+; ----------------------------------------------------------------
+; Strings
+; ----------------------------------------------------------------
+
+[Strings]
+ManufacturerName       = "RGPU Project"
+DeviceDesc             = "RGPU Virtual GPU"
+ServiceDesc            = "RGPU Virtual GPU Driver"
+DiskName               = "RGPU Virtual GPU Installation Disk"
+SPSVCINST_ASSOCSERVICE = 0x00000002

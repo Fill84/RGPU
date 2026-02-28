@@ -83,7 +83,7 @@ static IPC_CLIENT: OnceLock<NvdecIpcClient> = OnceLock::new();
 
 fn get_client() -> &'static NvdecIpcClient {
     IPC_CLIENT.get_or_init(|| {
-        let path = rgpu_common::platform::default_ipc_path();
+        let path = rgpu_common::platform::resolve_ipc_address();
         NvdecIpcClient::new(&path)
     })
 }

@@ -12,6 +12,7 @@ members = [
     "crates/rgpu-ui",
     "crates/rgpu-nvdec-interpose",
     "crates/rgpu-nvenc-interpose",
+    "crates/rgpu-nvml-interpose",
 ]
 resolver = "2"
 

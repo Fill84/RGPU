@@ -151,6 +151,13 @@
       </Component>
     </ComponentGroup>
 
+    <!-- NVML interpose DLL -->
+    <ComponentGroup Id="NvmlLib" Directory="LibDir">
+      <Component Id="NvmlInterposeDll" Guid="*" Bitness="always64">
+        <File Id="rgpu_nvml_interpose.dll" Source="staging\rgpu_nvml_interpose.dll" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
     <!-- Vulkan ICD -->
     <ComponentGroup Id="VulkanLib" Directory="LibDir">
       <Component Id="VulkanIcdDll" Guid="*" Bitness="always64">
@@ -281,6 +288,34 @@
     <SetProperty Id="CA_RestoreNvenc" Before="CA_RestoreNvenc" Sequence="execute"
                  Value="[CA_RestoreNvenc_Cmd]" />
 
+    <!-- === NVML: nvml.dll === -->
+    <Property Id="CA_BackupNvml_Cmd" Value="" />
+    <SetProperty Id="CA_BackupNvml_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;if not exist &quot;[System64Folder]nvml_real.dll&quot; if exist &quot;[System64Folder]nvml.dll&quot; copy /Y &quot;[System64Folder]nvml.dll&quot; &quot;[System64Folder]nvml_real.dll&quot;&quot;" />
+    <CustomAction Id="CA_BackupNvml"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_BackupNvml" Before="CA_BackupNvml" Sequence="execute"
+                 Value="[CA_BackupNvml_Cmd]" />
+
+    <Property Id="CA_ReplaceNvml_Cmd" Value="" />
+    <SetProperty Id="CA_ReplaceNvml_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;copy /Y &quot;[INSTALLDIR]lib\rgpu_nvml_interpose.dll&quot; &quot;[System64Folder]nvml.dll&quot;&quot;" />
+    <CustomAction Id="CA_ReplaceNvml"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_ReplaceNvml" Before="CA_ReplaceNvml" Sequence="execute"
+                 Value="[CA_ReplaceNvml_Cmd]" />
+
+    <Property Id="CA_RestoreNvml_Cmd" Value="" />
+    <SetProperty Id="CA_RestoreNvml_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;if exist &quot;[System64Folder]nvml_real.dll&quot; (copy /Y &quot;[System64Folder]nvml_real.dll&quot; &quot;[System64Folder]nvml.dll&quot; &amp; del /Q &quot;[System64Folder]nvml_real.dll&quot;) else (if exist &quot;[System64Folder]nvml.dll&quot; del /Q &quot;[System64Folder]nvml.dll&quot;)&quot;" />
+    <CustomAction Id="CA_RestoreNvml"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_RestoreNvml" Before="CA_RestoreNvml" Sequence="execute"
+                 Value="[CA_RestoreNvml_Cmd]" />
+
     <!-- === NVDEC: nvcuvid.dll === -->
     <Property Id="CA_BackupNvdec_Cmd" Value="" />
     <SetProperty Id="CA_BackupNvdec_Cmd" After="CostFinalize" Sequence="execute"
@@ -341,6 +376,13 @@
       </Component>
     </ComponentGroup>
 
+    <ComponentGroup Id="NvmlRegistryFlags" Directory="LibDir">
+      <Component Id="NvmlRegistryFlag" Guid="*" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="Software\RGPU"
+                       Name="NvmlInterposed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
     <!-- ================================================================ -->
     <!--                   INSTALL/UNINSTALL SEQUENCE                     -->
     <!-- ================================================================ -->
@@ -353,7 +395,10 @@
       <Custom Action="CA_BackupNvenc" After="CA_ReplaceCuda" Condition="(&amp;NvencInterpose=3)" />
       <Custom Action="CA_ReplaceNvenc" After="CA_BackupNvenc" Condition="(&amp;NvencInterpose=3)" />
 
-      <Custom Action="CA_BackupNvdec" After="CA_ReplaceNvenc" Condition="(&amp;NvdecInterpose=3)" />
+      <Custom Action="CA_BackupNvml" After="CA_ReplaceNvenc" Condition="(&amp;NvmlInterpose=3)" />
+      <Custom Action="CA_ReplaceNvml" After="CA_BackupNvml" Condition="(&amp;NvmlInterpose=3)" />
+
+      <Custom Action="CA_BackupNvdec" After="CA_ReplaceNvml" Condition="(&amp;NvdecInterpose=3)" />
       <Custom Action="CA_ReplaceNvdec" After="CA_BackupNvdec" Condition="(&amp;NvdecInterpose=3)" />
 
       <Custom Action="CA_WriteIcdManifest" After="CA_ReplaceNvdec" Condition="(&amp;VulkanIcd=3)" />
@@ -361,6 +406,7 @@
       <!-- UNINSTALL: Restore original DLLs from backups (before files are removed) -->
       <Custom Action="CA_RestoreCuda" Before="RemoveFiles" Condition="(&amp;CudaInterpose=2)" />
       <Custom Action="CA_RestoreNvenc" Before="RemoveFiles" Condition="(&amp;NvencInterpose=2)" />
+      <Custom Action="CA_RestoreNvml" Before="RemoveFiles" Condition="(&amp;NvmlInterpose=2)" />
       <Custom Action="CA_RestoreNvdec" Before="RemoveFiles" Condition="(&amp;NvdecInterpose=2)" />
     </InstallExecuteSequence>
 
@@ -401,6 +447,14 @@
              Level="2" AllowAdvertise="no">
       <ComponentGroupRef Id="NvdecLib" />
       <ComponentGroupRef Id="NvdecRegistryFlags" />
+    </Feature>
+
+    <Feature Id="NvmlInterpose"
+             Title="NVML Interpose (nvidia-smi / container discovery)"
+             Description="Replaces nvml.dll in System32 with RGPU interpose. Enables nvidia-smi and nvidia-container-toolkit to discover remote GPUs. Original DLL backed up as nvml_real.dll."
+             Level="2" AllowAdvertise="no">
+      <ComponentGroupRef Id="NvmlLib" />
+      <ComponentGroupRef Id="NvmlRegistryFlags" />
     </Feature>
 
     <Feature Id="VulkanIcd"

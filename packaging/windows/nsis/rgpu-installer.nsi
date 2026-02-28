@@ -221,6 +221,27 @@ Section "NVDEC Interpose (video decoding)" SEC_NVDEC
 SectionEnd
 
 ;---------------------------------
+; Section: NVML System-Wide Interpose
+;---------------------------------
+Section "NVML Interpose (nvidia-smi / container discovery)" SEC_NVML
+  SetOutPath "$INSTDIR\lib"
+  File "staging\rgpu_nvml_interpose.dll"
+
+  ; Back up the real NVIDIA nvml.dll if it exists
+  IfFileExists "$SYSDIR\nvml.dll" 0 no_nvml_backup_needed
+    IfFileExists "$SYSDIR\nvml_real.dll" skip_nvml_backup
+      DetailPrint "Backing up original nvml.dll..."
+      CopyFiles /SILENT "$SYSDIR\nvml.dll" "$SYSDIR\nvml_real.dll"
+      WriteRegStr HKLM "Software\RGPU" "NvmlBackedUp" "1"
+    skip_nvml_backup:
+  no_nvml_backup_needed:
+
+  DetailPrint "Installing RGPU NVML interpose as $SYSDIR\nvml.dll..."
+  CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvml_interpose.dll" "$SYSDIR\nvml.dll"
+  WriteRegStr HKLM "Software\RGPU" "NvmlInterposed" "1"
+SectionEnd
+
+;---------------------------------
 ; Section: Vulkan ICD Driver
 ;---------------------------------
 Section "Vulkan ICD Driver" SEC_VULKAN
@@ -282,11 +303,14 @@ Function .onSelChange
   SectionGetFlags ${SEC_CUDA} $1
   SectionGetFlags ${SEC_NVENC} $2
   SectionGetFlags ${SEC_NVDEC} $3
+  SectionGetFlags ${SEC_NVML} $5
   IntOp $1 $1 & 1
   IntOp $2 $2 & 1
   IntOp $3 $3 & 1
+  IntOp $5 $5 & 1
   IntOp $4 $1 | $2
   IntOp $4 $4 | $3
+  IntOp $4 $4 | $5
   IntCmp $4 0 no_conflict
     MessageBox MB_YESNO|MB_ICONEXCLAMATION "WARNING: Installing interpose libraries on a server machine will replace NVIDIA DLLs and break direct GPU access. Only install interpose components on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
     ; Deselect interpose components if user says No
@@ -299,6 +323,9 @@ Function .onSelChange
     SectionGetFlags ${SEC_NVDEC} $0
     IntOp $0 $0 & 0xFFFFFFFE
     SectionSetFlags ${SEC_NVDEC} $0
+    SectionGetFlags ${SEC_NVML} $0
+    IntOp $0 $0 & 0xFFFFFFFE
+    SectionSetFlags ${SEC_NVML} $0
   no_conflict:
 FunctionEnd
 
@@ -314,6 +341,8 @@ FunctionEnd
     "System-wide NVENC (video encoding) interception. Replaces nvEncodeAPI64.dll so hardware encoding (h264_nvenc, hevc_nvenc) uses the remote GPU."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVDEC} \
     "System-wide NVDEC (video decoding) interception. Replaces nvcuvid.dll so hardware decoding (h264_cuvid, hevc_cuvid) uses the remote GPU."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVML} \
+    "System-wide NVML interception. Replaces nvml.dll so nvidia-smi and nvidia-container-toolkit see remote GPUs."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VULKAN} \
     "Vulkan Installable Client Driver (ICD) for presenting remote GPUs as local Vulkan devices."
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SERVICE} \
@@ -374,6 +403,19 @@ Section "Uninstall"
       Delete "$SYSDIR\nvcuvid.dll"
   skip_nvdec_restore:
 
+  ; Restore original nvml.dll (NVML)
+  ReadRegStr $0 HKLM "Software\RGPU" "NvmlInterposed"
+  StrCmp $0 "1" 0 skip_nvml_restore
+    IfFileExists "$SYSDIR\nvml_real.dll" 0 remove_our_nvml
+      DetailPrint "Restoring original nvml.dll from backup..."
+      Delete "$SYSDIR\nvml.dll"
+      CopyFiles /SILENT "$SYSDIR\nvml_real.dll" "$SYSDIR\nvml.dll"
+      Delete "$SYSDIR\nvml_real.dll"
+      Goto skip_nvml_restore
+    remove_our_nvml:
+      Delete "$SYSDIR\nvml.dll"
+  skip_nvml_restore:
+
   ; Remove Vulkan ICD registry entry
   DeleteRegValue HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$INSTDIR\lib\rgpu_icd.json"
 
@@ -391,6 +433,7 @@ Section "Uninstall"
   Delete "$INSTDIR\lib\rgpu_cuda_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_nvenc_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_nvdec_interpose.dll"
+  Delete "$INSTDIR\lib\rgpu_nvml_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_vk_icd.dll"
   Delete "$INSTDIR\lib\rgpu_icd.json"
   Delete "$INSTDIR\uninstall.exe"

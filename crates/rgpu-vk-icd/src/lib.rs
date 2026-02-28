@@ -30,7 +30,7 @@ static IPC_CLIENT: OnceLock<ipc_client::IpcClient> = OnceLock::new();
 
 fn get_ipc_client() -> &'static ipc_client::IpcClient {
     IPC_CLIENT.get_or_init(|| {
-        let path = rgpu_common::platform::default_ipc_path();
+        let path = rgpu_common::platform::resolve_ipc_address();
         ipc_client::IpcClient::new(&path)
     })
 }

@@ -47,6 +47,11 @@ pub struct ClientConfig {
     /// GPU ordering preference
     #[serde(default)]
     pub gpu_ordering: GpuOrdering,
+    /// TCP address for IPC listener (for Docker/container support).
+    /// When set, the daemon listens on this TCP address alongside the
+    /// local Unix socket / named pipe. Example: "0.0.0.0:9877"
+    #[serde(default)]
+    pub ipc_listen_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +137,7 @@ impl Default for ClientConfig {
             servers: Vec::new(),
             include_local_gpus: true,
             gpu_ordering: GpuOrdering::default(),
+            ipc_listen_address: None,
         }
     }
 }

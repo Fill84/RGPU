@@ -19,11 +19,16 @@ pub struct NvencIpcClient {
     connection: Mutex<Option<IpcConnection>>,
 }
 
-struct IpcConnection {
+enum IpcTransport {
     #[cfg(unix)]
-    stream: std::os::unix::net::UnixStream,
+    Unix(std::os::unix::net::UnixStream),
     #[cfg(windows)]
-    pipe: std::fs::File,
+    Pipe(std::fs::File),
+    Tcp(std::net::TcpStream),
+}
+
+struct IpcConnection {
+    transport: IpcTransport,
 }
 
 impl NvencIpcClient {
@@ -113,6 +118,17 @@ impl IpcConnection {
     }
 
     fn try_connect(path: &str) -> Result<Self, String> {
+        if rgpu_common::platform::is_tcp_address(path) {
+            let stream = std::net::TcpStream::connect(path)
+                .map_err(|e| format!("TCP connect: {}", e))?;
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+                .ok();
+            return Ok(Self {
+                transport: IpcTransport::Tcp(stream),
+            });
+        }
+
         #[cfg(unix)]
         {
             let stream = std::os::unix::net::UnixStream::connect(path)
@@ -120,7 +136,9 @@ impl IpcConnection {
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(30)))
                 .ok();
-            Ok(Self { stream })
+            Ok(Self {
+                transport: IpcTransport::Unix(stream),
+            })
         }
 
         #[cfg(windows)]
@@ -130,40 +148,32 @@ impl IpcConnection {
                 .write(true)
                 .open(path)
                 .map_err(|e| format!("{}", e))?;
-            Ok(Self { pipe })
+            Ok(Self {
+                transport: IpcTransport::Pipe(pipe),
+            })
         }
     }
 
     fn write_all(&mut self, data: &[u8]) -> Result<(), String> {
-        #[cfg(unix)]
-        {
-            self.stream
-                .write_all(data)
-                .map_err(|e| format!("IPC write error: {}", e))
+        match &mut self.transport {
+            #[cfg(unix)]
+            IpcTransport::Unix(s) => s.write_all(data),
+            #[cfg(windows)]
+            IpcTransport::Pipe(p) => p.write_all(data),
+            IpcTransport::Tcp(s) => s.write_all(data),
         }
-
-        #[cfg(windows)]
-        {
-            self.pipe
-                .write_all(data)
-                .map_err(|e| format!("IPC write error: {}", e))
-        }
+        .map_err(|e| format!("IPC write error: {}", e))
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), String> {
-        #[cfg(unix)]
-        {
-            self.stream
-                .read_exact(buf)
-                .map_err(|e| format!("IPC read error: {}", e))
+        match &mut self.transport {
+            #[cfg(unix)]
+            IpcTransport::Unix(s) => s.read_exact(buf),
+            #[cfg(windows)]
+            IpcTransport::Pipe(p) => p.read_exact(buf),
+            IpcTransport::Tcp(s) => s.read_exact(buf),
         }
-
-        #[cfg(windows)]
-        {
-            self.pipe
-                .read_exact(buf)
-                .map_err(|e| format!("IPC read error: {}", e))
-        }
+        .map_err(|e| format!("IPC read error: {}", e))
     }
 
     fn read_message(&mut self) -> Result<Message, String> {

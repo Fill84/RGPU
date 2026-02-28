@@ -400,7 +400,7 @@ static IPC_CLIENT: OnceLock<NvencIpcClient> = OnceLock::new();
 
 fn get_client() -> &'static NvencIpcClient {
     IPC_CLIENT.get_or_init(|| {
-        let path = rgpu_common::platform::default_ipc_path();
+        let path = rgpu_common::platform::resolve_ipc_address();
         NvencIpcClient::new(&path)
     })
 }
