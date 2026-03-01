@@ -187,11 +187,15 @@ impl ClientDaemon {
         info!("GPU pool ready: {} GPU(s) total", total_gpus);
 
         // Create virtual device nodes for remote GPUs (Device Manager / lspci visibility)
-        // Wrapped in Arc<Mutex> so the reconnection loop can sync on connect/disconnect
+        // Disabled by default: creating Display adapter devices triggers NVIDIA's background
+        // services (NVDisplay.Container) to probe the device, which can cause security software
+        // to flag WinRing0 kernel driver usage. Enable via create_virtual_devices = true in config.
         let device_manager = Arc::new(Mutex::new(crate::device_manager::DeviceManager::new()));
-        {
+        if self.config.create_virtual_devices {
             let gpus = self.cached_gpus.read().await;
             device_manager.lock().await.sync_devices(&gpus);
+        } else {
+            debug!("virtual device creation disabled (create_virtual_devices = false)");
         }
 
         // Spawn background reconnection task
@@ -199,8 +203,9 @@ impl ClientDaemon {
         let reconnect_endpoints = self.endpoints.clone();
         let reconnect_pool = self.pool_manager.clone();
         let reconnect_devmgr = device_manager.clone();
+        let vdev_enabled = self.config.create_virtual_devices;
         tokio::spawn(async move {
-            reconnection_loop(reconnect_conns, reconnect_endpoints, reconnect_pool, reconnect_devmgr).await;
+            reconnection_loop(reconnect_conns, reconnect_endpoints, reconnect_pool, reconnect_devmgr, vdev_enabled).await;
         });
 
         // Shutdown notification — triggered by IPC Shutdown message
@@ -1565,6 +1570,7 @@ async fn reconnection_loop(
     endpoints: Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: Arc<GpuPoolManager>,
     device_manager: Arc<Mutex<crate::device_manager::DeviceManager>>,
+    vdev_enabled: bool,
 ) {
     let mut backoff_secs: Vec<u64> = Vec::new();
 
@@ -1622,9 +1628,11 @@ async fn reconnection_loop(
                                 )
                                 .await;
                             // Uninstall virtual GPU devices for the disconnected server
-                            let connected_gpus = pool_manager.get_connected_remote_gpus().await;
-                            device_manager.lock().await.sync_devices(&connected_gpus);
-                            info!("virtual GPU devices synced after server {} disconnect", i);
+                            if vdev_enabled {
+                                let connected_gpus = pool_manager.get_connected_remote_gpus().await;
+                                device_manager.lock().await.sync_devices(&connected_gpus);
+                                info!("virtual GPU devices synced after server {} disconnect", i);
+                            }
                         }
                     }
                 }
@@ -1651,9 +1659,11 @@ async fn reconnection_loop(
                     backoff_secs[i] = 1; // Reset backoff
 
                     // Install virtual GPU devices for the reconnected server
-                    let connected_gpus = pool_manager.get_connected_remote_gpus().await;
-                    device_manager.lock().await.sync_devices(&connected_gpus);
-                    info!("virtual GPU devices synced after server {} reconnect", i);
+                    if vdev_enabled {
+                        let connected_gpus = pool_manager.get_connected_remote_gpus().await;
+                        device_manager.lock().await.sync_devices(&connected_gpus);
+                        info!("virtual GPU devices synced after server {} reconnect", i);
+                    }
                 }
                 Err(e) => {
                     debug!("reconnection to server {} failed: {}", i, e);

@@ -52,6 +52,12 @@ pub struct ClientConfig {
     /// local Unix socket / named pipe. Example: "0.0.0.0:9877"
     #[serde(default)]
     pub ipc_listen_address: Option<String>,
+    /// Create virtual GPU device nodes in the OS for remote GPUs.
+    /// When true, remote GPUs appear under "Display adapters" in Device Manager
+    /// (Windows) or /dev/rgpu_gpuN (Linux). Disabled by default because it can
+    /// trigger security software when NVIDIA background services probe the device.
+    #[serde(default)]
+    pub create_virtual_devices: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +144,7 @@ impl Default for ClientConfig {
             include_local_gpus: true,
             gpu_ordering: GpuOrdering::default(),
             ipc_listen_address: None,
+            create_virtual_devices: false,
         }
     }
 }
