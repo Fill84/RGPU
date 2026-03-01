@@ -114,6 +114,12 @@ pub enum Message {
     Ping,
     Pong,
 
+    // ── Lifecycle ───────────────────────────────────────────
+    /// Request daemon/server to shut down gracefully.
+    Shutdown,
+    /// Acknowledgement that shutdown is in progress.
+    ShutdownAck,
+
     // ── Error ───────────────────────────────────────────────
     Error(ProtocolError),
 }

@@ -156,6 +156,7 @@ async fn handle_server_lifecycle(
             let mut st = state.lock().unwrap();
             st.server.origin = ServiceOrigin::WindowsService;
             st.server.status = ServiceStatus::Starting;
+            st.server.start_time = Some(std::time::Instant::now());
         } else {
             // Start embedded server
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -248,6 +249,7 @@ async fn handle_client_lifecycle(
             let mut st = state.lock().unwrap();
             st.client.origin = ServiceOrigin::WindowsService;
             st.client.status = ServiceStatus::Starting;
+            st.client.start_time = Some(std::time::Instant::now());
         } else {
             // Spawn client process
             let config_path = {
@@ -260,7 +262,8 @@ async fn handle_client_lifecycle(
                     let mut st = state.lock().unwrap();
                     st.client.origin = ServiceOrigin::ExternalProcess;
                     st.client.status = ServiceStatus::Starting;
-                    info!("spawned client daemon process");
+                    st.client.start_time = Some(std::time::Instant::now());
+                    info!("spawned client daemon process (config: {})", config_path);
                 }
                 Err(e) => {
                     let mut st = state.lock().unwrap();
@@ -284,10 +287,18 @@ async fn handle_client_lifecycle(
                     warn!("failed to stop RGPU Client service: {}", e);
                 }
             }
-            _ => {
-                // For external processes, we rely on IPC disconnect / signal
-                // The daemon itself handles SIGTERM/SIGINT
+            ServiceOrigin::ExternalProcess => {
+                // Send Shutdown message to the daemon via IPC
+                let result = tokio::task::spawn_blocking(|| {
+                    service_detection::send_shutdown_to_daemon()
+                }).await;
+                match result {
+                    Ok(Ok(())) => info!("sent Shutdown to client daemon via IPC"),
+                    Ok(Err(e)) => warn!("failed to send Shutdown to daemon: {}", e),
+                    Err(e) => warn!("shutdown task failed: {}", e),
+                }
             }
+            _ => {}
         }
 
         let mut st = state.lock().unwrap();
@@ -378,6 +389,7 @@ async fn probe_server(
                 st.server.origin = ServiceOrigin::ExternalProcess;
             }
             st.server.status = ServiceStatus::Running;
+            st.server.start_time = None; // Connected, clear grace period
 
             if let Some(m) = probe.metrics {
                 let snapshot = MetricsSnapshot {
@@ -393,18 +405,31 @@ async fn probe_server(
                 st.server.push_metrics(snapshot);
             }
         }
-        Ok(Err(_)) => {
+        Ok(Err(e)) => {
             // Server not reachable
             let mut st = state.lock().unwrap();
-            if st.server.origin != ServiceOrigin::Embedded {
-                // Only mark as stopped if we're not embedded
-                if st.server.status.is_running() {
-                    // Was running, now gone
-                    st.server.clear_monitoring();
-                    st.server.origin = ServiceOrigin::NotDetected;
-                }
-                st.server.status = ServiceStatus::Stopped;
+            if st.server.origin == ServiceOrigin::Embedded {
+                return;
             }
+
+            // Don't override Starting status during grace period
+            if matches!(st.server.status, ServiceStatus::Starting) {
+                if st.server.in_startup_grace() {
+                    debug!("server TCP probe failed during startup grace period: {}", e);
+                    return;
+                }
+                st.server.status =
+                    ServiceStatus::Error("server did not respond after startup".to_string());
+                st.server.start_time = None;
+                return;
+            }
+
+            if st.server.status.is_running() {
+                // Was running, now gone
+                st.server.clear_monitoring();
+                st.server.origin = ServiceOrigin::NotDetected;
+            }
+            st.server.status = ServiceStatus::Stopped;
         }
         Err(e) => {
             debug!("server probe task failed: {}", e);
@@ -427,6 +452,7 @@ async fn probe_client_daemon(state: &Arc<Mutex<UiState>>) {
                 st.client.origin = ServiceOrigin::ExternalProcess;
             }
             st.client.status = ServiceStatus::Running;
+            st.client.start_time = None; // Connected, clear grace period
 
             // Derive remote servers from GPU pool
             let mut servers: Vec<ClientRemoteServer> = Vec::new();
@@ -447,9 +473,23 @@ async fn probe_client_daemon(state: &Arc<Mutex<UiState>>) {
             st.client.remote_servers = servers;
             st.client.gpu_pool = gpus;
         }
-        Ok(Err(_)) => {
+        Ok(Err(e)) => {
             // Client daemon not reachable
             let mut st = state.lock().unwrap();
+
+            // Don't override Starting status during grace period
+            if matches!(st.client.status, ServiceStatus::Starting) {
+                if st.client.in_startup_grace() {
+                    debug!("client IPC probe failed during startup grace period: {}", e);
+                    return;
+                }
+                // Grace period expired — daemon failed to start
+                st.client.status =
+                    ServiceStatus::Error("daemon did not respond after startup".to_string());
+                st.client.start_time = None;
+                return;
+            }
+
             if st.client.status.is_running() && st.client.origin != ServiceOrigin::Embedded {
                 st.client.clear_monitoring();
                 st.client.origin = ServiceOrigin::NotDetected;

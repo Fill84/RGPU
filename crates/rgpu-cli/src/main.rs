@@ -132,12 +132,30 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     rgpu_common::init_logging();
 
     let cli = Cli::parse();
 
+    // Service mode: dispatch to Windows SCM immediately, before creating any tokio runtime.
+    // The service handler creates its own runtime internally.
+    #[cfg(windows)]
+    match &cli.command {
+        Some(Commands::Server { service: true, .. }) => {
+            return service::run_as_server_service();
+        }
+        Some(Commands::Client { service: true, .. }) => {
+            return service::run_as_client_service();
+        }
+        _ => {}
+    }
+
+    // Normal (non-service) mode: create tokio runtime and run async main
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Server {
             port,
@@ -146,16 +164,8 @@ async fn main() -> anyhow::Result<()> {
             key,
             config,
             pid_file,
-            service,
+            service: _,
         }) => {
-            #[cfg(windows)]
-            if service {
-                service::run_as_server_service()?;
-                return Ok(());
-            }
-            #[cfg(not(windows))]
-            let _ = service;
-
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -191,16 +201,8 @@ async fn main() -> anyhow::Result<()> {
             token,
             config,
             pid_file,
-            service,
+            service: _,
         }) => {
-            #[cfg(windows)]
-            if service {
-                service::run_as_client_service()?;
-                return Ok(());
-            }
-            #[cfg(not(windows))]
-            let _ = service;
-
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }

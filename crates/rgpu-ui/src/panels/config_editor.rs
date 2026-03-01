@@ -1,7 +1,7 @@
 use egui::{Color32, RichText, Ui};
 
 use rgpu_core::config::{
-    GpuOrdering, RgpuConfig, ServerEndpoint, TokenEntry, TransportMode,
+    self, GpuOrdering, RgpuConfig, ServerEndpoint, TokenEntry, TransportMode,
 };
 
 use crate::state::{ConfigEditorState, UiState};
@@ -61,11 +61,37 @@ pub fn show(ui: &mut Ui, state: &mut UiState) {
                 {
                     match toml::to_string_pretty(&editor.config) {
                         Ok(content) => {
-                            if let Err(e) = std::fs::write(&state.config_path, &content) {
-                                state.push_error(format!("Failed to save config: {}", e));
-                            } else {
-                                if let Some(ref mut ed) = state.config_editor {
-                                    ed.dirty = false;
+                            // Try saving to current path first
+                            match std::fs::write(&state.config_path, &content) {
+                                Ok(()) => {
+                                    if let Some(ref mut ed) = state.config_editor {
+                                        ed.dirty = false;
+                                    }
+                                }
+                                Err(_) => {
+                                    // Current path not writable, try user-local fallback
+                                    let fallback = config::writable_config_path(&state.config_path);
+                                    if let Some(parent) = std::path::Path::new(&fallback).parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    match std::fs::write(&fallback, &content) {
+                                        Ok(()) => {
+                                            state.config_path = fallback.clone();
+                                            if let Some(ref mut ed) = state.config_editor {
+                                                ed.dirty = false;
+                                            }
+                                            state.push_error(format!(
+                                                "Saved to {} (original path not writable)",
+                                                fallback
+                                            ));
+                                        }
+                                        Err(e2) => {
+                                            state.push_error(format!(
+                                                "Failed to save config: {}",
+                                                e2
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -62,6 +62,9 @@ VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
+
+; Finish page: if reboot is needed (locked NVML), offer reboot option
+!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -76,6 +79,28 @@ Function .onInit
   ReadEnvStr $ProgramDataDir PROGRAMDATA
   StrCmp $ProgramDataDir "" 0 +2
     StrCpy $ProgramDataDir "C:\ProgramData"
+
+  ; Support /INSTALLTYPE=client or /INSTALLTYPE=server for silent installs
+  ; Usage: setup.exe /S /INSTALLTYPE=server
+  ; Section indices: 0=Core(RO), 1=Client, 2=Server
+  ${GetParameters} $0
+  ${GetOptions} $0 "/INSTALLTYPE=" $1
+  StrCmp $1 "" init_done
+  StrCmp $1 "server" select_server
+  StrCmp $1 "Server" select_server
+  ; Default: client (already selected by default)
+  Goto init_done
+
+  select_server:
+    ; Deselect Client (section 1), select Server (section 2)
+    SectionGetFlags 1 $2
+    IntOp $2 $2 & 0xFFFFFFFE
+    SectionSetFlags 1 $2
+    SectionGetFlags 2 $2
+    IntOp $2 $2 | 1
+    SectionSetFlags 2 $2
+
+  init_done:
 FunctionEnd
 
 Function un.onInit
@@ -103,6 +128,8 @@ Section "RGPU Core (required)" SEC_CORE
 
   ; Create config directory and install default config
   CreateDirectory "$ProgramDataDir\RGPU"
+  ; Grant Users group Modify access so UI can save config without elevation
+  nsExec::ExecToLog 'icacls "$ProgramDataDir\RGPU" /grant Users:(OI)(CI)M /T'
   IfFileExists "$ProgramDataDir\RGPU\rgpu.toml" skip_config
     SetOutPath "$ProgramDataDir\RGPU"
     File "/oname=rgpu.toml" "staging\rgpu.toml.template"
@@ -154,38 +181,37 @@ Section "RGPU Core (required)" SEC_CORE
 SectionEnd
 
 ;---------------------------------
-; Section: CUDA System-Wide Interpose
+; Installation Type: Client
+; Installs all interpose DLLs (CUDA, NVENC, NVDEC, NVML, NVAPI),
+; Vulkan ICD, and RGPU Client Daemon service (auto-start with OS).
 ;---------------------------------
-Section "CUDA System-Wide Interpose (client only)" SEC_CUDA
-  ; Install a copy to INSTDIR\lib for reference
+Section "Client Installation" SEC_CLIENT
+  ; ---- CUDA Interpose ----
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_cuda_interpose.dll"
 
-  ; --- System-wide CUDA interception via System32 ---
-  ; Back up the real NVIDIA nvcuda.dll if it exists
-  IfFileExists "$SYSDIR\nvcuda.dll" 0 no_backup_needed
-    ; Only backup if we haven't already (previous install)
-    IfFileExists "$SYSDIR\nvcuda_real.dll" skip_backup
+  ${DisableX64FSRedirection}
+
+  IfFileExists "$SYSDIR\nvcuda.dll" 0 no_cuda_backup_needed
+    IfFileExists "$SYSDIR\nvcuda_real.dll" skip_cuda_backup
       DetailPrint "Backing up original nvcuda.dll to nvcuda_real.dll..."
       CopyFiles /SILENT "$SYSDIR\nvcuda.dll" "$SYSDIR\nvcuda_real.dll"
       WriteRegStr HKLM "Software\RGPU" "NvCudaBackedUp" "1"
-    skip_backup:
-  no_backup_needed:
+    skip_cuda_backup:
+  no_cuda_backup_needed:
 
-  ; Copy our interpose DLL as nvcuda.dll into System32
   DetailPrint "Installing RGPU CUDA interpose as $SYSDIR\nvcuda.dll..."
   CopyFiles /SILENT "$INSTDIR\lib\rgpu_cuda_interpose.dll" "$SYSDIR\nvcuda.dll"
   WriteRegStr HKLM "Software\RGPU" "CudaInterposed" "1"
-SectionEnd
 
-;---------------------------------
-; Section: NVENC System-Wide Interpose
-;---------------------------------
-Section "NVENC Interpose (video encoding)" SEC_NVENC
+  ${EnableX64FSRedirection}
+
+  ; ---- NVENC Interpose ----
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_nvenc_interpose.dll"
 
-  ; Back up the real NVIDIA nvEncodeAPI64.dll if it exists
+  ${DisableX64FSRedirection}
+
   IfFileExists "$SYSDIR\nvEncodeAPI64.dll" 0 no_nvenc_backup_needed
     IfFileExists "$SYSDIR\nvEncodeAPI64_real.dll" skip_nvenc_backup
       DetailPrint "Backing up original nvEncodeAPI64.dll..."
@@ -197,16 +223,15 @@ Section "NVENC Interpose (video encoding)" SEC_NVENC
   DetailPrint "Installing RGPU NVENC interpose as $SYSDIR\nvEncodeAPI64.dll..."
   CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvenc_interpose.dll" "$SYSDIR\nvEncodeAPI64.dll"
   WriteRegStr HKLM "Software\RGPU" "NvencInterposed" "1"
-SectionEnd
 
-;---------------------------------
-; Section: NVDEC System-Wide Interpose
-;---------------------------------
-Section "NVDEC Interpose (video decoding)" SEC_NVDEC
+  ${EnableX64FSRedirection}
+
+  ; ---- NVDEC Interpose ----
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_nvdec_interpose.dll"
 
-  ; Back up the real NVIDIA nvcuvid.dll if it exists
+  ${DisableX64FSRedirection}
+
   IfFileExists "$SYSDIR\nvcuvid.dll" 0 no_nvdec_backup_needed
     IfFileExists "$SYSDIR\nvcuvid_real.dll" skip_nvdec_backup
       DetailPrint "Backing up original nvcuvid.dll..."
@@ -218,38 +243,71 @@ Section "NVDEC Interpose (video decoding)" SEC_NVDEC
   DetailPrint "Installing RGPU NVDEC interpose as $SYSDIR\nvcuvid.dll..."
   CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvdec_interpose.dll" "$SYSDIR\nvcuvid.dll"
   WriteRegStr HKLM "Software\RGPU" "NvdecInterposed" "1"
-SectionEnd
 
-;---------------------------------
-; Section: NVML System-Wide Interpose
-;---------------------------------
-Section "NVML Interpose (nvidia-smi / container discovery)" SEC_NVML
+  ${EnableX64FSRedirection}
+
+  ; ---- NVML Interpose ----
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_nvml_interpose.dll"
 
-  ; Back up the real NVIDIA nvml.dll if it exists
-  IfFileExists "$SYSDIR\nvml.dll" 0 no_nvml_backup_needed
-    IfFileExists "$SYSDIR\nvml_real.dll" skip_nvml_backup
-      DetailPrint "Backing up original nvml.dll..."
-      CopyFiles /SILENT "$SYSDIR\nvml.dll" "$SYSDIR\nvml_real.dll"
-      WriteRegStr HKLM "Software\RGPU" "NvmlBackedUp" "1"
-    skip_nvml_backup:
-  no_nvml_backup_needed:
+  ${DisableX64FSRedirection}
 
+  ; NVML: nvml.dll is typically locked by NVIDIA background services.
+  ; Strategy: try direct rename+copy first; if file is locked, schedule
+  ; replacement at reboot via MoveFileEx (runs before services start).
+
+  IfFileExists "$SYSDIR\nvml.dll" 0 nvml_no_existing
+    IfFileExists "$SYSDIR\nvml_real.dll" nvml_try_replace
+
+    DetailPrint "Backing up original nvml.dll..."
+    Rename "$SYSDIR\nvml.dll" "$SYSDIR\nvml_real.dll"
+    IfErrors 0 nvml_try_replace
+
+      DetailPrint "nvml.dll is locked - scheduling replacement for reboot..."
+      CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvml_interpose.dll" "$SYSDIR\nvml_rgpu_pending.dll"
+      System::Call 'kernel32::MoveFileExW(t "$SYSDIR\nvml.dll", t "$SYSDIR\nvml_real.dll", i 5)'
+      System::Call 'kernel32::MoveFileExW(t "$SYSDIR\nvml_rgpu_pending.dll", t "$SYSDIR\nvml.dll", i 5)'
+      WriteRegStr HKLM "Software\RGPU" "NvmlBackedUp" "1"
+      WriteRegStr HKLM "Software\RGPU" "NvmlInterposed" "1"
+      SetRebootFlag true
+      ${EnableX64FSRedirection}
+      Goto nvml_done
+
+  nvml_try_replace:
+  Delete "$SYSDIR\nvml.dll"
+  nvml_no_existing:
   DetailPrint "Installing RGPU NVML interpose as $SYSDIR\nvml.dll..."
   CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvml_interpose.dll" "$SYSDIR\nvml.dll"
+  WriteRegStr HKLM "Software\RGPU" "NvmlBackedUp" "1"
   WriteRegStr HKLM "Software\RGPU" "NvmlInterposed" "1"
-SectionEnd
+  ${EnableX64FSRedirection}
 
-;---------------------------------
-; Section: Vulkan ICD Driver
-;---------------------------------
-Section "Vulkan ICD Driver" SEC_VULKAN
+  nvml_done:
+
+  ; ---- NVAPI Interpose ----
+  SetOutPath "$INSTDIR\lib"
+  File "staging\rgpu_nvapi_interpose.dll"
+
+  ${DisableX64FSRedirection}
+
+  IfFileExists "$SYSDIR\nvapi64.dll" 0 no_nvapi_backup_needed
+    IfFileExists "$SYSDIR\nvapi64_real.dll" skip_nvapi_backup
+      DetailPrint "Backing up original nvapi64.dll..."
+      CopyFiles /SILENT "$SYSDIR\nvapi64.dll" "$SYSDIR\nvapi64_real.dll"
+      WriteRegStr HKLM "Software\RGPU" "NvApiBackedUp" "1"
+    skip_nvapi_backup:
+  no_nvapi_backup_needed:
+
+  DetailPrint "Installing RGPU NVAPI interpose as $SYSDIR\nvapi64.dll..."
+  CopyFiles /SILENT "$INSTDIR\lib\rgpu_nvapi_interpose.dll" "$SYSDIR\nvapi64.dll"
+  WriteRegStr HKLM "Software\RGPU" "NvapiInterposed" "1"
+
+  ${EnableX64FSRedirection}
+
+  ; ---- Vulkan ICD Driver ----
   SetOutPath "$INSTDIR\lib"
   File "staging\rgpu_vk_icd.dll"
 
-  ; Generate ICD manifest with correct absolute path
-  ; Use forward slashes for Vulkan loader compatibility
   FileOpen $0 "$INSTDIR\lib\rgpu_icd.json" w
   FileWrite $0 '{$\r$\n'
   FileWrite $0 '    "file_format_version": "1.0.1",$\r$\n'
@@ -261,71 +319,55 @@ Section "Vulkan ICD Driver" SEC_VULKAN
   FileWrite $0 '}$\r$\n'
   FileClose $0
 
-  ; Register Vulkan ICD in Windows registry
-  ; The Vulkan loader checks HKLM\SOFTWARE\Khronos\Vulkan\Drivers for ICD manifests
   WriteRegDWORD HKLM "SOFTWARE\Khronos\Vulkan\Drivers" \
     "$INSTDIR\lib\rgpu_icd.json" 0
-SectionEnd
 
-;---------------------------------
-; Section: Server Windows Service
-;---------------------------------
-Section /o "Server Service (manual start)" SEC_SERVICE
-  ; Create Windows Service using sc.exe
-  ; Service starts manually (demand) -- user enables it explicitly
-  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --service --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= demand DisplayName= "RGPU Remote GPU Server"'
-  nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
-SectionEnd
-
-;---------------------------------
-; Section: Client Daemon Service
-;---------------------------------
-Section /o "Client Daemon Service (auto-start)" SEC_CLIENT_SERVICE
-  ; Create Windows Service for the client daemon with auto-start
-  ; Reads config from the system-wide ProgramData location
+  ; ---- Client Daemon Service (auto-start with OS) ----
   nsExec::ExecToLog 'sc create "RGPU Client" binPath= "\"$INSTDIR\bin\rgpu.exe\" client --service --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= auto DisplayName= "RGPU Client Daemon"'
   nsExec::ExecToLog 'sc description "RGPU Client" "RGPU Client Daemon - connects to remote GPU servers and exposes them locally via IPC"'
-
-  ; Start the service immediately
   nsExec::ExecToLog 'sc start "RGPU Client"'
+
+  ; Record installation type
+  WriteRegStr HKLM "Software\RGPU" "InstallType" "Client"
 SectionEnd
 
 ;---------------------------------
-; Component conflict warning
-; (must be after all Section definitions so SEC_* identifiers are resolved)
+; Installation Type: Server
+; Installs RGPU Server as a Windows Service (auto-start with OS).
+; For machines with GPUs to share over the network.
+;---------------------------------
+Section /o "Server Installation" SEC_SERVER
+  ; ---- Server Windows Service (auto-start with OS) ----
+  nsExec::ExecToLog 'sc create "RGPU Server" binPath= "\"$INSTDIR\bin\rgpu.exe\" server --service --config \"$ProgramDataDir\RGPU\rgpu.toml\"" start= auto DisplayName= "RGPU Remote GPU Server"'
+  nsExec::ExecToLog 'sc description "RGPU Server" "RGPU Remote GPU Sharing Server - exposes local GPUs over the network"'
+  nsExec::ExecToLog 'sc start "RGPU Server"'
+
+  ; Record installation type
+  WriteRegStr HKLM "Software\RGPU" "InstallType" "Server"
+SectionEnd
+
+;---------------------------------
+; Enforce mutual exclusivity: Client and Server cannot both be selected
 ;---------------------------------
 Function .onSelChange
-  ; Warn if both Server Service and any interpose components are selected
-  SectionGetFlags ${SEC_SERVICE} $0
+  ; Get which section changed by checking current state
+  SectionGetFlags ${SEC_CLIENT} $0
+  SectionGetFlags ${SEC_SERVER} $1
   IntOp $0 $0 & 1
-  IntCmp $0 0 no_conflict
-
-  SectionGetFlags ${SEC_CUDA} $1
-  SectionGetFlags ${SEC_NVENC} $2
-  SectionGetFlags ${SEC_NVDEC} $3
-  SectionGetFlags ${SEC_NVML} $5
   IntOp $1 $1 & 1
-  IntOp $2 $2 & 1
-  IntOp $3 $3 & 1
-  IntOp $5 $5 & 1
-  IntOp $4 $1 | $2
-  IntOp $4 $4 | $3
-  IntOp $4 $4 | $5
-  IntCmp $4 0 no_conflict
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION "WARNING: Installing interpose libraries on a server machine will replace NVIDIA DLLs and break direct GPU access. Only install interpose components on CLIENT machines.$\r$\n$\r$\nKeep both selected?" IDYES no_conflict
-    ; Deselect interpose components if user says No
-    SectionGetFlags ${SEC_CUDA} $0
+
+  ; If both are selected, warn and deselect the other
+  IntCmp $0 0 check_none
+  IntCmp $1 0 no_conflict
+    ; Both selected - deselect server (client was most recently toggled)
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Client and Server cannot be installed on the same machine.$\r$\nInstalling interpose libraries on a server would replace NVIDIA DLLs and break direct GPU access.$\r$\n$\r$\nPlease select only one."
+    SectionGetFlags ${SEC_SERVER} $0
     IntOp $0 $0 & 0xFFFFFFFE
-    SectionSetFlags ${SEC_CUDA} $0
-    SectionGetFlags ${SEC_NVENC} $0
-    IntOp $0 $0 & 0xFFFFFFFE
-    SectionSetFlags ${SEC_NVENC} $0
-    SectionGetFlags ${SEC_NVDEC} $0
-    IntOp $0 $0 & 0xFFFFFFFE
-    SectionSetFlags ${SEC_NVDEC} $0
-    SectionGetFlags ${SEC_NVML} $0
-    IntOp $0 $0 & 0xFFFFFFFE
-    SectionSetFlags ${SEC_NVML} $0
+    SectionSetFlags ${SEC_SERVER} $0
+    Goto no_conflict
+
+  check_none:
+  ; If neither is selected, that's fine - user can choose later
   no_conflict:
 FunctionEnd
 
@@ -335,20 +377,10 @@ FunctionEnd
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CORE} \
     "The RGPU command-line tool and GUI. Required."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CUDA} \
-    "System-wide CUDA interception. Replaces nvcuda.dll in System32 so ALL applications use remote GPUs. WARNING: Do NOT install on machines running the RGPU server."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVENC} \
-    "System-wide NVENC (video encoding) interception. Replaces nvEncodeAPI64.dll so hardware encoding (h264_nvenc, hevc_nvenc) uses the remote GPU."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVDEC} \
-    "System-wide NVDEC (video decoding) interception. Replaces nvcuvid.dll so hardware decoding (h264_cuvid, hevc_cuvid) uses the remote GPU."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NVML} \
-    "System-wide NVML interception. Replaces nvml.dll so nvidia-smi and nvidia-container-toolkit see remote GPUs."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VULKAN} \
-    "Vulkan Installable Client Driver (ICD) for presenting remote GPUs as local Vulkan devices."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SERVICE} \
-    "Install RGPU Server as a Windows Service (manual start). For machines with GPUs to share."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CLIENT_SERVICE} \
-    "Install RGPU Client Daemon as an auto-start Windows Service. Connects to remote servers on boot. Reads config from $ProgramDataDir\RGPU\rgpu.toml."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_CLIENT} \
+    "Install RGPU as a client machine. Installs all GPU interpose libraries (CUDA, NVENC, NVDEC, NVML, NVAPI), Vulkan ICD driver, and the RGPU Client Daemon service (auto-starts with Windows). Use this on machines that need to access remote GPUs."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SERVER} \
+    "Install RGPU as a server machine. Installs the RGPU Server service (auto-starts with Windows). Use this on machines with GPUs that you want to share over the network."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ;---------------------------------
@@ -362,8 +394,10 @@ Section "Uninstall"
   nsExec::ExecToLog 'sc delete "RGPU Server"'
 
   ; Restore original nvcuda.dll from backup (if we replaced it)
+  ; NOTE: NSIS is 32-bit, so we must disable WOW64 redirection to access real System32
   ReadRegStr $0 HKLM "Software\RGPU" "CudaInterposed"
   StrCmp $0 "1" 0 skip_cuda_restore
+    ${DisableX64FSRedirection}
     ; Check if backup exists
     IfFileExists "$SYSDIR\nvcuda_real.dll" 0 remove_our_nvcuda
       ; Restore the original NVIDIA driver
@@ -371,50 +405,98 @@ Section "Uninstall"
       Delete "$SYSDIR\nvcuda.dll"
       CopyFiles /SILENT "$SYSDIR\nvcuda_real.dll" "$SYSDIR\nvcuda.dll"
       Delete "$SYSDIR\nvcuda_real.dll"
+      ${EnableX64FSRedirection}
       Goto skip_cuda_restore
     remove_our_nvcuda:
       ; No backup existed (no NVIDIA driver was installed), just remove our DLL
       Delete "$SYSDIR\nvcuda.dll"
+      ${EnableX64FSRedirection}
   skip_cuda_restore:
 
   ; Restore original nvEncodeAPI64.dll (NVENC)
   ReadRegStr $0 HKLM "Software\RGPU" "NvencInterposed"
   StrCmp $0 "1" 0 skip_nvenc_restore
+    ${DisableX64FSRedirection}
     IfFileExists "$SYSDIR\nvEncodeAPI64_real.dll" 0 remove_our_nvenc
       DetailPrint "Restoring original nvEncodeAPI64.dll from backup..."
       Delete "$SYSDIR\nvEncodeAPI64.dll"
       CopyFiles /SILENT "$SYSDIR\nvEncodeAPI64_real.dll" "$SYSDIR\nvEncodeAPI64.dll"
       Delete "$SYSDIR\nvEncodeAPI64_real.dll"
+      ${EnableX64FSRedirection}
       Goto skip_nvenc_restore
     remove_our_nvenc:
       Delete "$SYSDIR\nvEncodeAPI64.dll"
+      ${EnableX64FSRedirection}
   skip_nvenc_restore:
 
   ; Restore original nvcuvid.dll (NVDEC)
   ReadRegStr $0 HKLM "Software\RGPU" "NvdecInterposed"
   StrCmp $0 "1" 0 skip_nvdec_restore
+    ${DisableX64FSRedirection}
     IfFileExists "$SYSDIR\nvcuvid_real.dll" 0 remove_our_nvdec
       DetailPrint "Restoring original nvcuvid.dll from backup..."
       Delete "$SYSDIR\nvcuvid.dll"
       CopyFiles /SILENT "$SYSDIR\nvcuvid_real.dll" "$SYSDIR\nvcuvid.dll"
       Delete "$SYSDIR\nvcuvid_real.dll"
+      ${EnableX64FSRedirection}
       Goto skip_nvdec_restore
     remove_our_nvdec:
       Delete "$SYSDIR\nvcuvid.dll"
+      ${EnableX64FSRedirection}
   skip_nvdec_restore:
 
   ; Restore original nvml.dll (NVML)
+  ; Our nvml.dll may be locked by NVIDIA services; use MoveFileEx reboot fallback.
   ReadRegStr $0 HKLM "Software\RGPU" "NvmlInterposed"
   StrCmp $0 "1" 0 skip_nvml_restore
-    IfFileExists "$SYSDIR\nvml_real.dll" 0 remove_our_nvml
+    ${DisableX64FSRedirection}
+    IfFileExists "$SYSDIR\nvml_real.dll" 0 un_remove_our_nvml
+      ; Try direct restore: delete ours, copy backup back, delete backup
       DetailPrint "Restoring original nvml.dll from backup..."
       Delete "$SYSDIR\nvml.dll"
+      IfErrors 0 un_nvml_direct_restore
+        ; Delete failed (file locked) - schedule for reboot
+        DetailPrint "nvml.dll is locked - scheduling restore for reboot..."
+        System::Call 'kernel32::MoveFileExW(t "$SYSDIR\nvml.dll", t 0, i 4)'
+        System::Call 'kernel32::MoveFileExW(t "$SYSDIR\nvml_real.dll", t "$SYSDIR\nvml.dll", i 5)'
+        SetRebootFlag true
+        ${EnableX64FSRedirection}
+        Goto skip_nvml_restore
+      un_nvml_direct_restore:
       CopyFiles /SILENT "$SYSDIR\nvml_real.dll" "$SYSDIR\nvml.dll"
       Delete "$SYSDIR\nvml_real.dll"
+      ${EnableX64FSRedirection}
       Goto skip_nvml_restore
-    remove_our_nvml:
+    un_remove_our_nvml:
+      ; No backup - just remove our DLL
       Delete "$SYSDIR\nvml.dll"
+      IfErrors 0 +3
+        ; Locked - schedule deletion for reboot
+        System::Call 'kernel32::MoveFileExW(t "$SYSDIR\nvml.dll", t 0, i 4)'
+        SetRebootFlag true
+      ${EnableX64FSRedirection}
   skip_nvml_restore:
+
+  ; Clean up any pending NVML staging file (from a reboot-deferred install)
+  ${DisableX64FSRedirection}
+  Delete "$SYSDIR\nvml_rgpu_pending.dll"
+  ${EnableX64FSRedirection}
+
+  ; Restore original nvapi64.dll (NVAPI)
+  ReadRegStr $0 HKLM "Software\RGPU" "NvapiInterposed"
+  StrCmp $0 "1" 0 skip_nvapi_restore
+    ${DisableX64FSRedirection}
+    IfFileExists "$SYSDIR\nvapi64_real.dll" 0 remove_our_nvapi
+      DetailPrint "Restoring original nvapi64.dll from backup..."
+      Delete "$SYSDIR\nvapi64.dll"
+      CopyFiles /SILENT "$SYSDIR\nvapi64_real.dll" "$SYSDIR\nvapi64.dll"
+      Delete "$SYSDIR\nvapi64_real.dll"
+      ${EnableX64FSRedirection}
+      Goto skip_nvapi_restore
+    remove_our_nvapi:
+      Delete "$SYSDIR\nvapi64.dll"
+      ${EnableX64FSRedirection}
+  skip_nvapi_restore:
 
   ; Remove Vulkan ICD registry entry
   DeleteRegValue HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$INSTDIR\lib\rgpu_icd.json"
@@ -434,6 +516,7 @@ Section "Uninstall"
   Delete "$INSTDIR\lib\rgpu_nvenc_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_nvdec_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_nvml_interpose.dll"
+  Delete "$INSTDIR\lib\rgpu_nvapi_interpose.dll"
   Delete "$INSTDIR\lib\rgpu_vk_icd.dll"
   Delete "$INSTDIR\lib\rgpu_icd.json"
   Delete "$INSTDIR\uninstall.exe"

@@ -127,6 +127,9 @@ pub struct ServerRoleState {
     pub origin: ServiceOrigin,
     pub status: ServiceStatus,
 
+    /// When the server was last started (for startup grace period)
+    pub start_time: Option<std::time::Instant>,
+
     /// GPUs being served (from server's QueryGpus or direct gpu_infos())
     pub served_gpus: Vec<GpuInfo>,
 
@@ -151,6 +154,7 @@ impl ServerRoleState {
         Self {
             origin: ServiceOrigin::NotDetected,
             status: ServiceStatus::Unknown,
+            start_time: None,
             served_gpus: Vec::new(),
             metrics: None,
             metrics_history: VecDeque::with_capacity(MAX_METRICS_HISTORY),
@@ -159,6 +163,15 @@ impl ServerRoleState {
             connected_clients: 0,
             start_requested: false,
             stop_requested: false,
+        }
+    }
+
+    /// Returns true if we're within the startup grace period.
+    pub fn in_startup_grace(&self) -> bool {
+        if let Some(t) = self.start_time {
+            t.elapsed().as_secs() < crate::state::STARTUP_GRACE_SECS
+        } else {
+            false
         }
     }
 
@@ -214,6 +227,9 @@ pub struct ClientRoleState {
     pub origin: ServiceOrigin,
     pub status: ServiceStatus,
 
+    /// When the daemon was last started (for startup grace period)
+    pub start_time: Option<std::time::Instant>,
+
     /// GPU pool from the daemon (local + remote, ordered)
     pub gpu_pool: Vec<GpuInfo>,
 
@@ -233,11 +249,15 @@ pub struct ClientRoleState {
     pub stop_requested: bool,
 }
 
+/// Grace period (seconds) after starting a daemon before declaring it failed.
+pub const STARTUP_GRACE_SECS: u64 = 10;
+
 impl ClientRoleState {
     pub fn new() -> Self {
         Self {
             origin: ServiceOrigin::NotDetected,
             status: ServiceStatus::Unknown,
+            start_time: None,
             gpu_pool: Vec::new(),
             remote_servers: Vec::new(),
             interpose: InterposeStatus::default(),
@@ -246,6 +266,15 @@ impl ClientRoleState {
             rates: MetricsRates::default(),
             start_requested: false,
             stop_requested: false,
+        }
+    }
+
+    /// Returns true if we're within the startup grace period.
+    pub fn in_startup_grace(&self) -> bool {
+        if let Some(t) = self.start_time {
+            t.elapsed().as_secs() < STARTUP_GRACE_SECS
+        } else {
+            false
         }
     }
 

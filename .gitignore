@@ -7,3 +7,12 @@ todos.md
 plan.md
 woolly-seeking-cat.md
 rgpu.toml
+plan-*.md
+diag*.ps1
+run_*.ps1
+icons.py
+rgpu-setup.exe
+packaging/windows/nsis/staging/
+packaging/windows/nsis/*.exe
+packaging/windows/msi/staging/
+packaging/linux/container-libs/

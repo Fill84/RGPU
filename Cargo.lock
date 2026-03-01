@@ -2714,6 +2714,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgpu-nvapi-interpose"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "rgpu-common",
+ "rgpu-core",
+ "rgpu-protocol",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "rgpu-nvdec-interpose"
 version = "0.1.0"
 dependencies = [

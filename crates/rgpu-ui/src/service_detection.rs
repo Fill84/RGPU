@@ -234,6 +234,62 @@ pub fn probe_client_ipc() -> Result<Vec<GpuInfo>, String> {
 }
 
 // ============================================================================
+// Client daemon shutdown via IPC
+// ============================================================================
+
+/// Send a Shutdown message to the client daemon via IPC.
+/// Returns Ok(()) if the daemon acknowledged, Err if it couldn't be reached.
+pub fn send_shutdown_to_daemon() -> Result<(), String> {
+    let ipc_path = default_ipc_path();
+
+    #[cfg(windows)]
+    let mut stream = {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&ipc_path)
+            .map_err(|e| format!("open named pipe {}: {}", ipc_path, e))?
+    };
+
+    #[cfg(unix)]
+    let mut stream = {
+        use std::os::unix::net::UnixStream;
+        let timeout = Duration::from_secs(2);
+        let s = UnixStream::connect(&ipc_path)
+            .map_err(|e| format!("connect to Unix socket {}: {}", ipc_path, e))?;
+        s.set_read_timeout(Some(timeout))
+            .map_err(|e| format!("set read timeout: {}", e))?;
+        s.set_write_timeout(Some(timeout))
+            .map_err(|e| format!("set write timeout: {}", e))?;
+        s
+    };
+
+    // Send Shutdown
+    let frame = wire::encode_message(&Message::Shutdown, 0)
+        .map_err(|e| format!("encode Shutdown: {}", e))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("write to IPC: {}", e))?;
+
+    // Read acknowledgement (best-effort, daemon may exit before responding)
+    let mut header_buf = [0u8; wire::HEADER_SIZE];
+    match stream.read_exact(&mut header_buf) {
+        Ok(_) => {
+            let (flags, _stream_id, payload_len) =
+                wire::decode_header(&header_buf).map_err(|e| format!("decode header: {}", e))?;
+            let mut payload = vec![0u8; payload_len as usize];
+            let _ = stream.read_exact(&mut payload);
+            let _ = wire::decode_message(&payload, flags);
+        }
+        Err(_) => {
+            // Daemon may have already exited — that's fine
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Interpose library detection
 // ============================================================================
 

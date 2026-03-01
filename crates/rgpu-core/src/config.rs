@@ -165,12 +165,22 @@ impl RgpuConfig {
 }
 
 /// Returns the default config file path based on platform conventions.
+///
 /// Search order:
-/// 1. System-wide config: `%PROGRAMDATA%\RGPU\rgpu.toml` (Windows) or `/etc/rgpu/rgpu.toml` (Linux/macOS)
-/// 2. Local fallback: `./rgpu.toml`
+/// 1. User config: `%APPDATA%\RGPU\rgpu.toml` (Windows) or `~/.config/rgpu/rgpu.toml` (Linux/macOS)
+/// 2. System-wide config: `%PROGRAMDATA%\RGPU\rgpu.toml` (Windows) or `/etc/rgpu/rgpu.toml` (Linux/macOS)
+/// 3. Local fallback: `./rgpu.toml`
 pub fn default_config_path() -> String {
     #[cfg(windows)]
     {
+        // Check user-local config first (always writable)
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let user_path = format!(r"{}\RGPU\rgpu.toml", appdata);
+            if std::path::Path::new(&user_path).exists() {
+                return user_path;
+            }
+        }
+        // Fall back to system-wide config
         let programdata = std::env::var("PROGRAMDATA")
             .unwrap_or_else(|_| r"C:\ProgramData".to_string());
         let system_path = format!(r"{}\RGPU\rgpu.toml", programdata);
@@ -180,12 +190,81 @@ pub fn default_config_path() -> String {
     }
     #[cfg(not(windows))]
     {
+        // Check user-local config first
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_path = std::path::PathBuf::from(home)
+                .join(".config/rgpu/rgpu.toml");
+            if user_path.exists() {
+                return user_path.to_string_lossy().to_string();
+            }
+        }
         let system_path = "/etc/rgpu/rgpu.toml";
         if std::path::Path::new(system_path).exists() {
             return system_path.to_string();
         }
     }
     "rgpu.toml".to_string()
+}
+
+/// Returns a writable config path, suitable for saving from the UI.
+///
+/// If the current config path is not writable, returns a user-local fallback path.
+/// Also creates the parent directory if needed.
+pub fn writable_config_path(current_path: &str) -> String {
+    // Try writing to the current path first
+    if is_path_writable(current_path) {
+        return current_path.to_string();
+    }
+
+    // Fall back to user-local config directory
+    let user_path = user_config_path();
+    if let Some(parent) = std::path::Path::new(&user_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    user_path
+}
+
+/// Returns the user-local config path (always writable).
+fn user_config_path() -> String {
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var("APPDATA")
+            .unwrap_or_else(|_| r"C:\Users\Default\AppData\Roaming".to_string());
+        format!(r"{}\RGPU\rgpu.toml", appdata)
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        format!("{}/.config/rgpu/rgpu.toml", home)
+    }
+}
+
+/// Check if a file path is writable (try opening for append).
+fn is_path_writable(path: &str) -> bool {
+    if std::path::Path::new(path).exists() {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(path)
+            .is_ok()
+    } else {
+        // File doesn't exist — check if parent dir is writable
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.exists() {
+                return std::fs::create_dir_all(parent).is_ok();
+            }
+            // Try creating a temp file in the parent
+            let test_path = parent.join(".rgpu_write_test");
+            if std::fs::write(&test_path, b"").is_ok() {
+                let _ = std::fs::remove_file(&test_path);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 }
 
 fn default_port() -> u16 {

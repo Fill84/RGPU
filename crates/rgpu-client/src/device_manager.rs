@@ -1,15 +1,20 @@
 //! Virtual GPU device manager for OS-level GPU visibility.
 //! Creates/removes virtual device nodes so remote GPUs appear in
 //! Device Manager (Windows) or /dev/ (Linux).
+//!
+//! On Windows: uses SetupDi APIs to register devices under the Display
+//! adapter class ({4d36e968-e325-11ce-bfc1-08002be10318}) so they appear
+//! in Device Manager under "Display adapters".
+//!
+//! On Linux: uses ioctl on /dev/rgpu_control to communicate with the
+//! kernel module.
 
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 
 use rgpu_protocol::gpu_info::GpuInfo;
 use crate::pool_manager::LOCAL_SERVER_ID;
 
 /// Manages virtual GPU device nodes in the OS.
-/// On Windows: uses SetupDi APIs to create/remove device instances.
-/// On Linux: uses ioctl on /dev/rgpu_control to communicate with the kernel module.
 pub struct DeviceManager {
     /// Currently registered virtual GPU devices
     devices: Vec<VirtualGpuDevice>,
@@ -19,15 +24,19 @@ struct VirtualGpuDevice {
     name: String,
     index: u32,
     total_memory: u64,
+    /// Windows: the PnP device instance ID (e.g. "ROOT\RGPU_VGPU\0000")
+    /// Used for removal via SetupDi.
     #[cfg(windows)]
     device_instance_id: Option<String>,
 }
 
 impl DeviceManager {
     pub fn new() -> Self {
-        Self {
+        let mut dm = Self {
             devices: Vec::new(),
-        }
+        };
+        dm.cleanup_orphaned_devices();
+        dm
     }
 
     /// Sync virtual devices with the current GPU list.
@@ -93,10 +102,18 @@ impl DeviceManager {
         self.devices.clear();
         info!("all virtual GPU device nodes removed");
     }
+
+    /// Remove any orphaned RGPU virtual devices from previous runs.
+    /// Called on startup to ensure a clean state.
+    fn cleanup_orphaned_devices(&mut self) {
+        #[cfg(windows)]
+        platform::cleanup_orphaned();
+        // Linux: kernel module handles cleanup on module unload
+    }
 }
 
 // ============================================================================
-// Windows implementation
+// Windows implementation — SetupDi (Display adapter class)
 // ============================================================================
 
 #[cfg(windows)]
@@ -104,59 +121,132 @@ mod platform {
     use super::*;
 
     use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
-        SetupDiCreateDeviceInfoList,
-        SetupDiCreateDeviceInfoW,
-        SetupDiSetDeviceRegistryPropertyW,
-        SetupDiCallClassInstaller,
-        SetupDiDestroyDeviceInfoList,
-        SetupDiGetClassDevsW,
-        SetupDiEnumDeviceInfo,
-        SetupDiGetDeviceRegistryPropertyW,
+        SetupDiCreateDeviceInfoList, SetupDiCreateDeviceInfoW,
+        SetupDiSetDeviceRegistryPropertyW, SetupDiCallClassInstaller,
+        SetupDiGetDeviceInstanceIdW, SetupDiDestroyDeviceInfoList,
+        SetupDiGetClassDevsW, SetupDiEnumDeviceInfo,
+        SetupDiGetDeviceRegistryPropertyW, SetupDiOpenDeviceInfoW,
         SetupDiRemoveDevice,
-        CM_Get_Device_ID_Size_Ex,
-        CM_Get_Device_IDW,
-        SP_DEVINFO_DATA,
-        DIGCF_PRESENT,
-        DIGCF_PROFILE,
+        SP_DEVINFO_DATA, DICD_GENERATE_ID,
+        SPDRP_HARDWAREID, SPDRP_FRIENDLYNAME,
         DIF_REGISTERDEVICE,
-        DIF_REMOVE,
-        SPDRP_HARDWAREID,
-        SPDRP_FRIENDLYNAME,
     };
+    use windows_sys::core::GUID;
 
-    /// HDEVINFO invalid value (INVALID_HANDLE_VALUE = -1)
-    const INVALID_HDEVINFO: isize = -1;
-
-    /// GUID_DEVCLASS_DISPLAY = {4d36e968-e325-11ce-bfc1-08002be10318}
-    const GUID_DEVCLASS_DISPLAY: windows_sys::core::GUID = windows_sys::core::GUID {
+    /// Display adapter class GUID: {4d36e968-e325-11ce-bfc1-08002be10318}
+    const GUID_DEVCLASS_DISPLAY: GUID = GUID {
         data1: 0x4d36e968,
         data2: 0xe325,
         data3: 0x11ce,
         data4: [0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18],
     };
 
-    /// Hardware ID for our virtual GPU device. Must match the INF file.
-    const HARDWARE_ID: &str = "Root\\RGPU_VGPU";
-
-    /// DICD_GENERATE_ID — let SetupDi generate a unique device instance ID.
-    const DICD_GENERATE_ID: u32 = 0x00000001;
+    /// Hardware ID for RGPU virtual GPU devices.
+    const RGPU_HARDWARE_ID: &str = "RGPU\\VirtualGPU";
 
     /// Encode a Rust string as a null-terminated wide string (UTF-16).
     fn to_wide_null(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    /// Encode a hardware ID as a double-null-terminated multi-sz string.
+    /// Encode a string as a double-null-terminated multi-sz string.
     fn to_multi_sz(s: &str) -> Vec<u16> {
-        // Multi-sz format: string\0\0
         s.encode_utf16()
             .chain(std::iter::once(0))
             .chain(std::iter::once(0))
             .collect()
     }
 
+    /// Check if a device's hardware IDs contain our RGPU hardware ID.
+    unsafe fn device_has_rgpu_hwid(
+        dev_info_set: isize,
+        dev_info_data: &mut SP_DEVINFO_DATA,
+    ) -> bool {
+        let mut buf = [0u16; 512];
+        let mut required_size = 0u32;
+        let result = SetupDiGetDeviceRegistryPropertyW(
+            dev_info_set,
+            dev_info_data,
+            SPDRP_HARDWAREID,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut u8,
+            (buf.len() * 2) as u32,
+            &mut required_size,
+        );
+        if result == 0 {
+            return false;
+        }
+
+        // Multi-sz: scan null-separated strings for our hardware ID
+        let target: Vec<u16> = RGPU_HARDWARE_ID.encode_utf16().collect();
+        let mut start = 0;
+        for (i, &ch) in buf.iter().enumerate() {
+            if ch == 0 {
+                if i > start {
+                    let slice = &buf[start..i];
+                    if slice == target.as_slice() {
+                        return true;
+                    }
+                }
+                start = i + 1;
+                // Double null = end of multi-sz
+                if start < buf.len() && buf[start] == 0 {
+                    break;
+                }
+            }
+        }
+        false
+    }
+
+    /// Remove orphaned RGPU virtual GPU devices from previous runs.
+    /// Scans all Display class devices and removes any with our hardware ID.
+    pub fn cleanup_orphaned() {
+        unsafe {
+            let dev_info_set = SetupDiGetClassDevsW(
+                &GUID_DEVCLASS_DISPLAY,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                0, // All devices in class (including non-present/phantom)
+            );
+            if dev_info_set as isize == -1 {
+                debug!("SetupDiGetClassDevsW failed during cleanup — no orphans to remove");
+                return;
+            }
+
+            let mut removed_count = 0u32;
+            let mut enum_index = 0u32;
+            loop {
+                let mut dev_info_data: SP_DEVINFO_DATA = std::mem::zeroed();
+                dev_info_data.cbSize = std::mem::size_of::<SP_DEVINFO_DATA>() as u32;
+
+                if SetupDiEnumDeviceInfo(dev_info_set, enum_index, &mut dev_info_data) == 0 {
+                    break;
+                }
+                enum_index += 1;
+
+                if device_has_rgpu_hwid(dev_info_set, &mut dev_info_data) {
+                    if SetupDiRemoveDevice(dev_info_set, &mut dev_info_data) != 0 {
+                        removed_count += 1;
+                    }
+                }
+            }
+
+            SetupDiDestroyDeviceInfoList(dev_info_set);
+
+            if removed_count > 0 {
+                info!("cleaned up {} orphaned RGPU virtual device(s) from previous run", removed_count);
+            }
+        }
+    }
+
     impl DeviceManager {
-        /// Create a virtual GPU device node via SetupDi APIs.
+        /// Create a virtual GPU device node under "Display adapters" via SetupDi.
+        ///
+        /// Uses DIF_REGISTERDEVICE to register the device with PnP under the
+        /// Display class. The device appears in Device Manager under
+        /// "Display adapters". No driver installation is attempted — the device
+        /// will show status code 28 (no driver) which is expected for a
+        /// virtual proxy device.
         pub(super) fn create_device(
             &self,
             friendly_name: &str,
@@ -164,127 +254,127 @@ mod platform {
             total_memory: u64,
         ) -> Option<VirtualGpuDevice> {
             unsafe {
-                // Create an empty device info set for the Display class
+                // Step 1: Create device info set for Display class
                 let dev_info_set = SetupDiCreateDeviceInfoList(
-                    &GUID_DEVCLASS_DISPLAY as *const _,
-                    std::ptr::null_mut(), // hwndParent
+                    &GUID_DEVCLASS_DISPLAY,
+                    std::ptr::null_mut(),
                 );
-                if dev_info_set == INVALID_HDEVINFO {
+                if dev_info_set as isize == -1 {
                     warn!(
-                        "SetupDiCreateDeviceInfoList failed (error {}); \
-                         virtual device not created -- the interpose libraries still work independently",
+                        "SetupDiCreateDeviceInfoList failed: {}; virtual device not created",
                         std::io::Error::last_os_error()
                     );
                     return None;
                 }
 
-                let mut dev_info_data = SP_DEVINFO_DATA {
-                    cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
-                    ClassGuid: GUID_DEVCLASS_DISPLAY,
-                    DevInst: 0,
-                    Reserved: 0,
-                };
+                // Step 2: Create device info element
+                // "RGPU_VGPU" with DICD_GENERATE_ID → Windows generates ROOT\RGPU_VGPU\xxxx
+                let dev_name_wide = to_wide_null("RGPU_VGPU");
+                let desc_wide = to_wide_null(friendly_name);
+                let mut dev_info_data: SP_DEVINFO_DATA = std::mem::zeroed();
+                dev_info_data.cbSize = std::mem::size_of::<SP_DEVINFO_DATA>() as u32;
 
-                // Create a device information element with hardware ID "Root\RGPU_VGPU"
-                let device_name_wide = to_wide_null(HARDWARE_ID);
                 let result = SetupDiCreateDeviceInfoW(
                     dev_info_set,
-                    device_name_wide.as_ptr(),
-                    &GUID_DEVCLASS_DISPLAY as *const _,
-                    std::ptr::null(), // device description (set separately via friendly name)
-                    std::ptr::null_mut(), // hwndParent
+                    dev_name_wide.as_ptr(),
+                    &GUID_DEVCLASS_DISPLAY,
+                    desc_wide.as_ptr(),
+                    std::ptr::null_mut(),
                     DICD_GENERATE_ID,
                     &mut dev_info_data,
                 );
                 if result == 0 {
+                    let err = std::io::Error::last_os_error();
                     warn!(
-                        "SetupDiCreateDeviceInfoW failed (error {}); \
-                         virtual device not created",
-                        std::io::Error::last_os_error()
+                        "SetupDiCreateDeviceInfoW failed: {}; virtual device not created \
+                         -- the interpose libraries still work independently",
+                        err
                     );
                     SetupDiDestroyDeviceInfoList(dev_info_set);
                     return None;
                 }
 
-                // Set the hardware ID (SPDRP_HARDWAREID) -- multi-sz format
-                let hw_id_multi_sz = to_multi_sz(HARDWARE_ID);
-                let hw_id_bytes = std::slice::from_raw_parts(
-                    hw_id_multi_sz.as_ptr() as *const u8,
-                    hw_id_multi_sz.len() * 2,
-                );
+                // Step 3: Set hardware ID (multi-sz string)
+                let hw_ids = to_multi_sz(RGPU_HARDWARE_ID);
                 let result = SetupDiSetDeviceRegistryPropertyW(
                     dev_info_set,
                     &mut dev_info_data,
                     SPDRP_HARDWAREID,
-                    hw_id_bytes.as_ptr(),
-                    hw_id_bytes.len() as u32,
+                    hw_ids.as_ptr() as *const u8,
+                    (hw_ids.len() * 2) as u32,
                 );
                 if result == 0 {
+                    let err = std::io::Error::last_os_error();
                     warn!(
-                        "SetupDiSetDeviceRegistryPropertyW(HARDWAREID) failed (error {})",
-                        std::io::Error::last_os_error()
+                        "SetupDiSetDeviceRegistryPropertyW(HARDWAREID) failed: {}",
+                        err
                     );
                     SetupDiDestroyDeviceInfoList(dev_info_set);
                     return None;
                 }
 
-                // Set the friendly name (SPDRP_FRIENDLYNAME)
+                // Step 4: Set friendly name (shown in Device Manager)
                 let friendly_wide = to_wide_null(friendly_name);
-                let friendly_bytes = std::slice::from_raw_parts(
-                    friendly_wide.as_ptr() as *const u8,
-                    friendly_wide.len() * 2,
-                );
-                let result = SetupDiSetDeviceRegistryPropertyW(
+                let _ = SetupDiSetDeviceRegistryPropertyW(
                     dev_info_set,
                     &mut dev_info_data,
                     SPDRP_FRIENDLYNAME,
-                    friendly_bytes.as_ptr(),
-                    friendly_bytes.len() as u32,
+                    friendly_wide.as_ptr() as *const u8,
+                    (friendly_wide.len() * 2) as u32,
                 );
-                if result == 0 {
-                    warn!(
-                        "SetupDiSetDeviceRegistryPropertyW(FRIENDLYNAME) failed (error {})",
-                        std::io::Error::last_os_error()
-                    );
-                    // Non-fatal: continue even if we can't set the friendly name
-                }
 
-                // Register the device with DIF_REGISTERDEVICE
+                // Step 5: Register device with PnP (DIF_REGISTERDEVICE)
+                // This creates the device node under Display adapters.
+                // We intentionally do NOT call DIF_INSTALLDEVICE — that requires
+                // a signed driver. The device appears with code 28 (no driver)
+                // but IS visible under Display adapters.
                 let result = SetupDiCallClassInstaller(
                     DIF_REGISTERDEVICE,
                     dev_info_set,
                     &mut dev_info_data,
                 );
                 if result == 0 {
+                    let err = std::io::Error::last_os_error();
                     warn!(
-                        "SetupDiCallClassInstaller(DIF_REGISTERDEVICE) failed (error {}); \
-                         virtual device not registered",
-                        std::io::Error::last_os_error()
+                        "SetupDiCallClassInstaller(DIF_REGISTERDEVICE) failed: {}; \
+                         virtual device not created -- the interpose libraries still work independently",
+                        err
                     );
                     SetupDiDestroyDeviceInfoList(dev_info_set);
                     return None;
                 }
 
-                // Extract the device instance ID for later removal
-                let instance_id = get_device_instance_id(&dev_info_data);
-
-                SetupDiDestroyDeviceInfoList(dev_info_set);
+                // Step 6: Read back the generated device instance ID
+                let mut instance_id_buf = [0u16; 256];
+                let mut required_size = 0u32;
+                SetupDiGetDeviceInstanceIdW(
+                    dev_info_set,
+                    &mut dev_info_data,
+                    instance_id_buf.as_mut_ptr(),
+                    instance_id_buf.len() as u32,
+                    &mut required_size,
+                );
+                let instance_id_str = String::from_utf16_lossy(
+                    &instance_id_buf[..required_size.saturating_sub(1) as usize]
+                );
 
                 info!(
-                    "registered virtual GPU device: {} (instance: {:?})",
-                    friendly_name, instance_id
+                    "virtual GPU registered under Display adapters: {} (instance: {})",
+                    friendly_name, instance_id_str
                 );
+
+                SetupDiDestroyDeviceInfoList(dev_info_set);
 
                 Some(VirtualGpuDevice {
                     name: friendly_name.to_string(),
                     index,
                     total_memory,
-                    device_instance_id: instance_id,
+                    device_instance_id: Some(instance_id_str),
                 })
             }
         }
 
-        /// Remove a virtual GPU device node by index.
+        /// Remove a virtual GPU device node via SetupDi.
         pub(super) fn remove_device(&self, index: u32) {
             let device = match self.devices.iter().find(|d| d.index == index) {
                 Some(d) => d,
@@ -292,146 +382,58 @@ mod platform {
             };
 
             let instance_id = match &device.device_instance_id {
-                Some(id) => id.clone(),
-                None => {
-                    warn!(
-                        "no device instance ID for device index {}; cannot remove",
-                        index
-                    );
-                    return;
-                }
+                Some(id) => id,
+                None => return,
             };
 
             unsafe {
-                // Find and remove the device by enumerating GUID_DEVCLASS_DISPLAY devices
-                let dev_info_set = SetupDiGetClassDevsW(
-                    &GUID_DEVCLASS_DISPLAY as *const _,
-                    std::ptr::null(),
-                    std::ptr::null_mut(), // hwndParent
-                    DIGCF_PRESENT | DIGCF_PROFILE,
+                let dev_info_set = SetupDiCreateDeviceInfoList(
+                    &GUID_DEVCLASS_DISPLAY,
+                    std::ptr::null_mut(),
                 );
-                if dev_info_set == INVALID_HDEVINFO {
-                    warn!(
-                        "SetupDiGetClassDevsW failed (error {}); cannot remove device",
-                        std::io::Error::last_os_error()
-                    );
+                if dev_info_set as isize == -1 {
+                    warn!("SetupDiCreateDeviceInfoList failed during removal");
                     return;
                 }
 
-                let mut member_index: u32 = 0;
-                loop {
-                    let mut dev_info_data = SP_DEVINFO_DATA {
-                        cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
-                        ClassGuid: GUID_DEVCLASS_DISPLAY,
-                        DevInst: 0,
-                        Reserved: 0,
-                    };
+                let instance_id_wide = to_wide_null(instance_id);
+                let mut dev_info_data: SP_DEVINFO_DATA = std::mem::zeroed();
+                dev_info_data.cbSize = std::mem::size_of::<SP_DEVINFO_DATA>() as u32;
 
-                    if SetupDiEnumDeviceInfo(dev_info_set, member_index, &mut dev_info_data) == 0 {
-                        break; // No more devices
-                    }
+                let result = SetupDiOpenDeviceInfoW(
+                    dev_info_set,
+                    instance_id_wide.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    &mut dev_info_data,
+                );
+                if result == 0 {
+                    let err = std::io::Error::last_os_error();
+                    warn!(
+                        "SetupDiOpenDeviceInfoW failed for {}: {}",
+                        instance_id, err
+                    );
+                    SetupDiDestroyDeviceInfoList(dev_info_set);
+                    return;
+                }
 
-                    // Check if this is our device by comparing hardware ID
-                    if let Some(hw_id) = get_device_registry_string(
-                        dev_info_set,
-                        &mut dev_info_data,
-                        SPDRP_HARDWAREID,
-                    ) {
-                        if hw_id.contains(HARDWARE_ID) {
-                            // Also verify instance ID if we have one
-                            if let Some(cur_id) = get_device_instance_id(&dev_info_data) {
-                                if cur_id == instance_id {
-                                    let result = SetupDiCallClassInstaller(
-                                        DIF_REMOVE,
-                                        dev_info_set,
-                                        &mut dev_info_data,
-                                    );
-                                    if result == 0 {
-                                        // Fallback: try SetupDiRemoveDevice
-                                        let result2 = SetupDiRemoveDevice(
-                                            dev_info_set,
-                                            &mut dev_info_data,
-                                        );
-                                        if result2 == 0 {
-                                            warn!(
-                                                "failed to remove virtual device {} (error {})",
-                                                instance_id,
-                                                std::io::Error::last_os_error()
-                                            );
-                                        } else {
-                                            info!("removed virtual GPU device: {}", instance_id);
-                                        }
-                                    } else {
-                                        info!("removed virtual GPU device: {}", instance_id);
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    member_index += 1;
+                let result = SetupDiRemoveDevice(dev_info_set, &mut dev_info_data);
+                if result == 0 {
+                    let err = std::io::Error::last_os_error();
+                    warn!(
+                        "SetupDiRemoveDevice failed for {}: {}",
+                        instance_id, err
+                    );
+                } else {
+                    info!(
+                        "removed virtual GPU from Display adapters: {} (index={})",
+                        device.name, index
+                    );
                 }
 
                 SetupDiDestroyDeviceInfoList(dev_info_set);
             }
         }
-    }
-
-    /// Read a string registry property from a device info set.
-    /// HDEVINFO is `isize` in windows-sys.
-    unsafe fn get_device_registry_string(
-        dev_info_set: isize,
-        dev_info_data: &mut SP_DEVINFO_DATA,
-        property: u32,
-    ) -> Option<String> {
-        let mut buf = [0u16; 512];
-        let mut required_size: u32 = 0;
-        let mut reg_type: u32 = 0;
-        let result = SetupDiGetDeviceRegistryPropertyW(
-            dev_info_set,
-            dev_info_data,
-            property,
-            &mut reg_type,
-            buf.as_mut_ptr() as *mut u8,
-            (buf.len() * 2) as u32,
-            &mut required_size,
-        );
-        if result == 0 {
-            return None;
-        }
-        // Find the first null terminator
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        Some(String::from_utf16_lossy(&buf[..len]))
-    }
-
-    /// Get the device instance ID string for a device info data entry.
-    /// Uses CM_Get_Device_ID_Size_Ex and CM_Get_Device_IDW via the DevInst handle.
-    unsafe fn get_device_instance_id(dev_info_data: &SP_DEVINFO_DATA) -> Option<String> {
-        let mut id_len: u32 = 0;
-        let cr = CM_Get_Device_ID_Size_Ex(
-            &mut id_len,
-            dev_info_data.DevInst,
-            0,
-            0, // hmachine: HMACHINE (isize), 0 = local machine
-        );
-        if cr != 0 {
-            return None;
-        }
-
-        let mut buf = vec![0u16; (id_len + 1) as usize];
-        let cr = CM_Get_Device_IDW(
-            dev_info_data.DevInst,
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-            0,
-        );
-        if cr != 0 {
-            return None;
-        }
-
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        Some(String::from_utf16_lossy(&buf[..len]))
     }
 }
 
@@ -602,12 +604,9 @@ mod tests {
         };
 
         // Sync with only local GPUs -- should create no virtual devices
-        // (create_device will fail in test env anyway since no driver/module loaded,
-        //  but the filtering itself should work)
         dm.sync_devices(&[local_gpu]);
 
         // No devices should have been added because local GPUs are filtered out
-        // (and even if they weren't, create_device would fail in the test environment)
         assert!(dm.devices.is_empty());
     }
 

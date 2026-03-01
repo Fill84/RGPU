@@ -9,29 +9,62 @@ use tracing::info;
 /// Spawn the RGPU server as a child process.
 pub fn spawn_server_process(config_path: &str) -> Result<std::process::Child, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find executable: {}", e))?;
+    if !std::path::Path::new(config_path).exists() {
+        return Err(format!("config file not found: {}", config_path));
+    }
     info!("Spawning server process: {:?} server --config {}", exe, config_path);
-    std::process::Command::new(&exe)
-        .arg("server")
-        .arg("--config")
-        .arg(config_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("server").arg("--config").arg(config_path);
+    configure_detached(&mut cmd);
+    cmd.spawn()
         .map_err(|e| format!("failed to spawn server process: {}", e))
 }
 
 /// Spawn the RGPU client daemon as a child process.
 pub fn spawn_client_process(config_path: &str) -> Result<std::process::Child, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find executable: {}", e))?;
+    if !std::path::Path::new(config_path).exists() {
+        return Err(format!("config file not found: {}", config_path));
+    }
     info!("Spawning client process: {:?} client --config {}", exe, config_path);
-    std::process::Command::new(&exe)
-        .arg("client")
-        .arg("--config")
-        .arg(config_path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("client").arg("--config").arg(config_path);
+    configure_detached(&mut cmd);
+    cmd.spawn()
         .map_err(|e| format!("failed to spawn client process: {}", e))
+}
+
+/// Configure a Command to run as a detached background process.
+///
+/// On Windows after FreeConsole(), both Stdio::null() and default handle
+/// inheritance fail with OS error 50. We must explicitly open NUL device
+/// as file handles and pass those, plus CREATE_NO_WINDOW to suppress console.
+fn configure_detached(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        // Open NUL device as regular files — works even after FreeConsole()
+        if let (Ok(nul_in), Ok(nul_out), Ok(nul_err)) = (
+            std::fs::File::open("NUL"),
+            std::fs::File::create("NUL"),
+            std::fs::File::create("NUL"),
+        ) {
+            cmd.stdin(nul_in).stdout(nul_out).stderr(nul_err);
+        } else {
+            // Fallback: pipes always work (child gets broken pipe on write)
+            cmd.stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    }
 }
 
 // ============================================================================

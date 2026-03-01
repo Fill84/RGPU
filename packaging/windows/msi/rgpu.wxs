@@ -9,12 +9,9 @@
 
   Features (matching NSIS installer sections):
     - Core (required): binary, config, PATH, shortcuts
-    - CudaInterpose: CUDA System32 DLL replacement
-    - NvencInterpose: NVENC System32 DLL replacement
-    - NvdecInterpose: NVDEC System32 DLL replacement
-    - VulkanIcd: Vulkan ICD driver + registry
-    - ServerService: RGPU Server Windows Service (manual start)
-    - ClientService: RGPU Client Daemon Service (auto-start)
+    - Client: All interpose DLLs (CUDA, NVENC, NVDEC, NVML, NVAPI),
+              Vulkan ICD, and Client Daemon Service (auto-start)
+    - Server: RGPU Server Windows Service (auto-start)
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -158,6 +155,13 @@
       </Component>
     </ComponentGroup>
 
+    <!-- NVAPI interpose DLL -->
+    <ComponentGroup Id="NvapiLib" Directory="LibDir">
+      <Component Id="NvapiInterposeDll" Guid="*" Bitness="always64">
+        <File Id="rgpu_nvapi_interpose.dll" Source="staging\rgpu_nvapi_interpose.dll" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
     <!-- Vulkan ICD -->
     <ComponentGroup Id="VulkanLib" Directory="LibDir">
       <Component Id="VulkanIcdDll" Guid="*" Bitness="always64">
@@ -178,7 +182,7 @@
     <!--                    SERVICE COMPONENTS                            -->
     <!-- ================================================================ -->
 
-    <!-- Server Service (manual start) -->
+    <!-- Server Service (auto-start) -->
     <ComponentGroup Id="ServerServiceGroup" Directory="BinDir">
       <Component Id="ServerServiceComp" Guid="*" Bitness="always64">
         <File Id="rgpu_server.exe" Source="staging\rgpu.exe" Name="rgpu-server-svc.exe" KeyPath="yes" />
@@ -186,13 +190,14 @@
                         Name="RGPUServer"
                         DisplayName="RGPU Remote GPU Server"
                         Description="Exposes local GPUs over the network for remote use"
-                        Start="demand"
+                        Start="auto"
                         Type="ownProcess"
                         Arguments="server --service --config &quot;[CommonAppDataFolder]RGPU\rgpu.toml&quot;"
                         Account="LocalSystem"
                         ErrorControl="normal" />
         <ServiceControl Id="RGPUServerCtrl"
                         Name="RGPUServer"
+                        Start="install"
                         Stop="both"
                         Remove="uninstall"
                         Wait="yes" />
@@ -344,6 +349,34 @@
     <SetProperty Id="CA_RestoreNvdec" Before="CA_RestoreNvdec" Sequence="execute"
                  Value="[CA_RestoreNvdec_Cmd]" />
 
+    <!-- === NVAPI: nvapi64.dll === -->
+    <Property Id="CA_BackupNvapi_Cmd" Value="" />
+    <SetProperty Id="CA_BackupNvapi_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;if not exist &quot;[System64Folder]nvapi64_real.dll&quot; if exist &quot;[System64Folder]nvapi64.dll&quot; copy /Y &quot;[System64Folder]nvapi64.dll&quot; &quot;[System64Folder]nvapi64_real.dll&quot;&quot;" />
+    <CustomAction Id="CA_BackupNvapi"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_BackupNvapi" Before="CA_BackupNvapi" Sequence="execute"
+                 Value="[CA_BackupNvapi_Cmd]" />
+
+    <Property Id="CA_ReplaceNvapi_Cmd" Value="" />
+    <SetProperty Id="CA_ReplaceNvapi_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;copy /Y &quot;[INSTALLDIR]lib\rgpu_nvapi_interpose.dll&quot; &quot;[System64Folder]nvapi64.dll&quot;&quot;" />
+    <CustomAction Id="CA_ReplaceNvapi"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_ReplaceNvapi" Before="CA_ReplaceNvapi" Sequence="execute"
+                 Value="[CA_ReplaceNvapi_Cmd]" />
+
+    <Property Id="CA_RestoreNvapi_Cmd" Value="" />
+    <SetProperty Id="CA_RestoreNvapi_Cmd" After="CostFinalize" Sequence="execute"
+                 Value="cmd.exe /c &quot;if exist &quot;[System64Folder]nvapi64_real.dll&quot; (copy /Y &quot;[System64Folder]nvapi64_real.dll&quot; &quot;[System64Folder]nvapi64.dll&quot; &amp; del /Q &quot;[System64Folder]nvapi64_real.dll&quot;) else (if exist &quot;[System64Folder]nvapi64.dll&quot; del /Q &quot;[System64Folder]nvapi64.dll&quot;)&quot;" />
+    <CustomAction Id="CA_RestoreNvapi"
+                  Execute="deferred" Impersonate="no" Return="ignore"
+                  BinaryRef="Wix4UtilCA_X86" DllEntry="WixQuietExec64" />
+    <SetProperty Id="CA_RestoreNvapi" Before="CA_RestoreNvapi" Sequence="execute"
+                 Value="[CA_RestoreNvapi_Cmd]" />
+
     <!-- === Vulkan ICD manifest generation === -->
     <Property Id="CA_WriteIcdManifest_Cmd" Value="" />
     <SetProperty Id="CA_WriteIcdManifest_Cmd" After="CostFinalize" Sequence="execute"
@@ -383,31 +416,42 @@
       </Component>
     </ComponentGroup>
 
+    <ComponentGroup Id="NvapiRegistryFlags" Directory="LibDir">
+      <Component Id="NvapiRegistryFlag" Guid="*" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="Software\RGPU"
+                       Name="NvapiInterposed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
     <!-- ================================================================ -->
     <!--                   INSTALL/UNINSTALL SEQUENCE                     -->
     <!-- ================================================================ -->
 
     <InstallExecuteSequence>
       <!-- INSTALL: Backup originals, then replace with interpose (after files are copied) -->
-      <Custom Action="CA_BackupCuda" After="InstallFiles" Condition="(&amp;CudaInterpose=3)" />
-      <Custom Action="CA_ReplaceCuda" After="CA_BackupCuda" Condition="(&amp;CudaInterpose=3)" />
+      <Custom Action="CA_BackupCuda" After="InstallFiles" Condition="(&amp;ClientInstall=3)" />
+      <Custom Action="CA_ReplaceCuda" After="CA_BackupCuda" Condition="(&amp;ClientInstall=3)" />
 
-      <Custom Action="CA_BackupNvenc" After="CA_ReplaceCuda" Condition="(&amp;NvencInterpose=3)" />
-      <Custom Action="CA_ReplaceNvenc" After="CA_BackupNvenc" Condition="(&amp;NvencInterpose=3)" />
+      <Custom Action="CA_BackupNvenc" After="CA_ReplaceCuda" Condition="(&amp;ClientInstall=3)" />
+      <Custom Action="CA_ReplaceNvenc" After="CA_BackupNvenc" Condition="(&amp;ClientInstall=3)" />
 
-      <Custom Action="CA_BackupNvml" After="CA_ReplaceNvenc" Condition="(&amp;NvmlInterpose=3)" />
-      <Custom Action="CA_ReplaceNvml" After="CA_BackupNvml" Condition="(&amp;NvmlInterpose=3)" />
+      <Custom Action="CA_BackupNvml" After="CA_ReplaceNvenc" Condition="(&amp;ClientInstall=3)" />
+      <Custom Action="CA_ReplaceNvml" After="CA_BackupNvml" Condition="(&amp;ClientInstall=3)" />
 
-      <Custom Action="CA_BackupNvdec" After="CA_ReplaceNvml" Condition="(&amp;NvdecInterpose=3)" />
-      <Custom Action="CA_ReplaceNvdec" After="CA_BackupNvdec" Condition="(&amp;NvdecInterpose=3)" />
+      <Custom Action="CA_BackupNvdec" After="CA_ReplaceNvml" Condition="(&amp;ClientInstall=3)" />
+      <Custom Action="CA_ReplaceNvdec" After="CA_BackupNvdec" Condition="(&amp;ClientInstall=3)" />
 
-      <Custom Action="CA_WriteIcdManifest" After="CA_ReplaceNvdec" Condition="(&amp;VulkanIcd=3)" />
+      <Custom Action="CA_BackupNvapi" After="CA_ReplaceNvdec" Condition="(&amp;ClientInstall=3)" />
+      <Custom Action="CA_ReplaceNvapi" After="CA_BackupNvapi" Condition="(&amp;ClientInstall=3)" />
+
+      <Custom Action="CA_WriteIcdManifest" After="CA_ReplaceNvapi" Condition="(&amp;ClientInstall=3)" />
 
       <!-- UNINSTALL: Restore original DLLs from backups (before files are removed) -->
-      <Custom Action="CA_RestoreCuda" Before="RemoveFiles" Condition="(&amp;CudaInterpose=2)" />
-      <Custom Action="CA_RestoreNvenc" Before="RemoveFiles" Condition="(&amp;NvencInterpose=2)" />
-      <Custom Action="CA_RestoreNvml" Before="RemoveFiles" Condition="(&amp;NvmlInterpose=2)" />
-      <Custom Action="CA_RestoreNvdec" Before="RemoveFiles" Condition="(&amp;NvdecInterpose=2)" />
+      <Custom Action="CA_RestoreCuda" Before="RemoveFiles" Condition="(&amp;ClientInstall=2)" />
+      <Custom Action="CA_RestoreNvenc" Before="RemoveFiles" Condition="(&amp;ClientInstall=2)" />
+      <Custom Action="CA_RestoreNvml" Before="RemoveFiles" Condition="(&amp;ClientInstall=2)" />
+      <Custom Action="CA_RestoreNvdec" Before="RemoveFiles" Condition="(&amp;ClientInstall=2)" />
+      <Custom Action="CA_RestoreNvapi" Before="RemoveFiles" Condition="(&amp;ClientInstall=2)" />
     </InstallExecuteSequence>
 
     <!-- ================================================================ -->
@@ -425,58 +469,30 @@
       <ComponentGroupRef Id="DesktopShortcuts" />
     </Feature>
 
-    <Feature Id="CudaInterpose"
-             Title="CUDA System-Wide Interpose"
-             Description="Replaces nvcuda.dll in System32 with RGPU interpose. Enables CUDA applications to transparently use remote GPUs. Original DLL backed up as nvcuda_real.dll."
+    <Feature Id="ClientInstall"
+             Title="Client Installation"
+             Description="Install RGPU as a client machine. Installs all GPU interpose libraries (CUDA, NVENC, NVDEC, NVML, NVAPI), Vulkan ICD driver, and the Client Daemon service (auto-starts with Windows). Use this on machines that need to access remote GPUs."
              Level="2" AllowAdvertise="no">
       <ComponentGroupRef Id="CudaLib" />
       <ComponentGroupRef Id="CudaRegistryFlags" />
-    </Feature>
-
-    <Feature Id="NvencInterpose"
-             Title="NVENC Interpose (video encoding)"
-             Description="Replaces nvEncodeAPI64.dll in System32 with RGPU interpose. Enables hardware video encoding (h264_nvenc, hevc_nvenc) via remote GPUs. Original DLL backed up as nvEncodeAPI64_real.dll."
-             Level="2" AllowAdvertise="no">
       <ComponentGroupRef Id="NvencLib" />
       <ComponentGroupRef Id="NvencRegistryFlags" />
-    </Feature>
-
-    <Feature Id="NvdecInterpose"
-             Title="NVDEC Interpose (video decoding)"
-             Description="Replaces nvcuvid.dll in System32 with RGPU interpose. Enables hardware video decoding (h264_cuvid, hevc_cuvid) via remote GPUs. Original DLL backed up as nvcuvid_real.dll."
-             Level="2" AllowAdvertise="no">
       <ComponentGroupRef Id="NvdecLib" />
       <ComponentGroupRef Id="NvdecRegistryFlags" />
-    </Feature>
-
-    <Feature Id="NvmlInterpose"
-             Title="NVML Interpose (nvidia-smi / container discovery)"
-             Description="Replaces nvml.dll in System32 with RGPU interpose. Enables nvidia-smi and nvidia-container-toolkit to discover remote GPUs. Original DLL backed up as nvml_real.dll."
-             Level="2" AllowAdvertise="no">
       <ComponentGroupRef Id="NvmlLib" />
       <ComponentGroupRef Id="NvmlRegistryFlags" />
-    </Feature>
-
-    <Feature Id="VulkanIcd"
-             Title="Vulkan ICD Driver"
-             Description="Registers RGPU as a Vulkan Installable Client Driver. Enables Vulkan applications to render on remote GPUs."
-             Level="2" AllowAdvertise="no">
+      <ComponentGroupRef Id="NvapiLib" />
+      <ComponentGroupRef Id="NvapiRegistryFlags" />
       <ComponentGroupRef Id="VulkanLib" />
       <ComponentGroupRef Id="VulkanRegistry" />
+      <ComponentGroupRef Id="ClientServiceGroup" />
     </Feature>
 
-    <Feature Id="ServerService"
-             Title="Server Service (manual start)"
-             Description="Installs RGPU as a Windows Service for the server role. Use this on machines that share their GPU(s). NOTE: Do not install on the same machine as interpose components."
+    <Feature Id="ServerInstall"
+             Title="Server Installation"
+             Description="Install RGPU as a server machine. Installs the RGPU Server service (auto-starts with Windows). Use this on machines with GPUs that you want to share over the network."
              Level="1000" AllowAdvertise="no">
       <ComponentGroupRef Id="ServerServiceGroup" />
-    </Feature>
-
-    <Feature Id="ClientService"
-             Title="Client Daemon Service (auto-start)"
-             Description="Installs RGPU Client Daemon as an auto-start Windows Service. Manages connections to remote GPU servers and provides local IPC for applications."
-             Level="1000" AllowAdvertise="no">
-      <ComponentGroupRef Id="ClientServiceGroup" />
     </Feature>
 
     <!-- ================================================================ -->

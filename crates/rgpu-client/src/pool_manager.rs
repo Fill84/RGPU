@@ -190,6 +190,50 @@ impl GpuPoolManager {
         self.servers.read().await.len()
     }
 
+    /// Update GPUs for a server after reconnection.
+    /// Replaces the server's GPU list and updates the pool entries.
+    pub async fn update_server_gpus(&self, server_index: usize, gpus: Vec<GpuInfo>) {
+        // Update the server's GPU list
+        {
+            let mut servers = self.servers.write().await;
+            if let Some(server) = servers.get_mut(server_index) {
+                server.gpus = gpus.clone();
+            }
+        }
+
+        // Remove old pool entries for this server and add new ones
+        let mut pool = self.gpu_pool.write().await;
+        pool.retain(|entry| entry.server_index != server_index || entry.is_local);
+
+        for gpu in gpus {
+            let pool_index = pool.len() as u32;
+            pool.push(GpuPoolEntry {
+                pool_index,
+                server_index,
+                server_device_index: gpu.server_device_index,
+                info: gpu,
+                is_local: false,
+            });
+        }
+
+        info!(
+            "updated server {} GPUs in pool (pool now has {} GPU(s))",
+            server_index,
+            pool.len()
+        );
+    }
+
+    /// Get GPUs from connected remote servers only (excludes local GPUs and disconnected servers).
+    /// Used by DeviceManager to sync virtual device nodes with the current connection state.
+    pub async fn get_connected_remote_gpus(&self) -> Vec<GpuInfo> {
+        let servers = self.servers.read().await;
+        servers
+            .iter()
+            .filter(|s| s.status == ConnectionStatus::Connected && s.server_id != LOCAL_SERVER_ID)
+            .flat_map(|s| s.gpus.clone())
+            .collect()
+    }
+
     /// Add local GPUs to the pool (for include_local_gpus).
     /// These GPUs are executed directly via local executors, not forwarded over the network.
     pub async fn add_local_gpus(&self, gpus: Vec<GpuInfo>) {

@@ -109,6 +109,9 @@ pub async fn run_verify(config_path: &str, json: bool) -> anyhow::Result<()> {
     // Check 9: NVML interpose
     check_nvml_interpose(&mut results);
 
+    // Check 10: NVAPI interpose
+    check_nvapi_interpose(&mut results);
+
     // Output
     if json {
         print_results_json(&results);
@@ -1047,6 +1050,80 @@ fn check_nvml_interpose_linux(results: &mut Vec<CheckResult>) {
             .detail("Expected at: /usr/lib/rgpu/librgpu_nvml_interpose.so")
             .detail("Install via .deb/.rpm package"),
     );
+}
+
+// ── Check 10: NVAPI Interpose ─────────────────────────────────────────────────
+
+fn check_nvapi_interpose(results: &mut Vec<CheckResult>) {
+    #[cfg(windows)]
+    {
+        check_nvapi_interpose_windows(results);
+    }
+    #[cfg(not(windows))]
+    {
+        results.push(CheckResult::skip(
+            "NVAPI interpose",
+            "NVAPI is Windows-only (not applicable on this platform)",
+        ));
+    }
+}
+
+#[cfg(windows)]
+fn check_nvapi_interpose_windows(results: &mut Vec<CheckResult>) {
+    let system_root =
+        std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let nvapi_path = format!(r"{}\System32\nvapi64.dll", system_root);
+    let backup_path = format!(r"{}\System32\nvapi64_real.dll", system_root);
+
+    if !std::path::Path::new(&nvapi_path).exists() {
+        results.push(
+            CheckResult::warn("NVAPI interpose", "nvapi64.dll not found in System32")
+                .detail("No NVAPI runtime installed or RGPU not yet installed"),
+        );
+        return;
+    }
+
+    match std::fs::read(&nvapi_path) {
+        Ok(data) => {
+            let marker = b"rgpu_interpose_marker";
+            if data
+                .windows(marker.len())
+                .any(|w| w == marker.as_slice())
+            {
+                let mut result = CheckResult::pass(
+                    "NVAPI interpose",
+                    "RGPU NVAPI interpose DLL installed in System32",
+                )
+                .detail(&format!("Path: {}", nvapi_path));
+
+                if std::path::Path::new(&backup_path).exists() {
+                    result = result
+                        .detail("Original NVIDIA NVAPI backed up as nvapi64_real.dll");
+                } else {
+                    result = result
+                        .detail("WARNING: nvapi64_real.dll backup not found");
+                }
+                results.push(result);
+            } else {
+                results.push(
+                    CheckResult::warn(
+                        "NVAPI interpose",
+                        "nvapi64.dll is the original NVIDIA NVAPI (not RGPU interpose)",
+                    )
+                    .detail("Run the RGPU installer and select 'NVAPI Interpose'"),
+                );
+            }
+        }
+        Err(e) => {
+            results.push(
+                CheckResult::fail(
+                    "NVAPI interpose",
+                    &format!("Cannot read {}: {}", nvapi_path, e),
+                )
+                .detail("You may need administrator privileges"),
+            );
+        }
+    }
 }
 
 // ── Output formatters ───────────────────────────────────────────────────────

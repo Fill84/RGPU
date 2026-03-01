@@ -187,19 +187,24 @@ impl ClientDaemon {
         info!("GPU pool ready: {} GPU(s) total", total_gpus);
 
         // Create virtual device nodes for remote GPUs (Device Manager / lspci visibility)
-        let mut device_manager = crate::device_manager::DeviceManager::new();
+        // Wrapped in Arc<Mutex> so the reconnection loop can sync on connect/disconnect
+        let device_manager = Arc::new(Mutex::new(crate::device_manager::DeviceManager::new()));
         {
             let gpus = self.cached_gpus.read().await;
-            device_manager.sync_devices(&gpus);
+            device_manager.lock().await.sync_devices(&gpus);
         }
 
         // Spawn background reconnection task
         let reconnect_conns = self.server_conns.clone();
         let reconnect_endpoints = self.endpoints.clone();
         let reconnect_pool = self.pool_manager.clone();
+        let reconnect_devmgr = device_manager.clone();
         tokio::spawn(async move {
-            reconnection_loop(reconnect_conns, reconnect_endpoints, reconnect_pool).await;
+            reconnection_loop(reconnect_conns, reconnect_endpoints, reconnect_pool, reconnect_devmgr).await;
         });
+
+        // Shutdown notification — triggered by IPC Shutdown message
+        let ipc_shutdown = Arc::new(tokio::sync::Notify::new());
 
         // Start IPC listener for local applications
         let ipc_path = rgpu_common::platform::default_ipc_path();
@@ -212,6 +217,7 @@ impl ClientDaemon {
         let local_nvenc = self.local_nvenc_executor.clone();
         let local_nvdec = self.local_nvdec_executor.clone();
         let local_session = self.local_session.clone();
+        let shutdown_for_ipc = ipc_shutdown.clone();
 
         info!("starting IPC listener on {}", ipc_path);
 
@@ -219,6 +225,7 @@ impl ClientDaemon {
             handle_ipc_message(
                 &cached_gpus, &server_conns, &endpoints, &pool_manager,
                 &local_cuda, &local_vulkan, &local_nvenc, &local_nvdec, &local_session,
+                &shutdown_for_ipc,
                 msg,
             )
         });
@@ -234,6 +241,7 @@ impl ClientDaemon {
             let local_nvenc = self.local_nvenc_executor.clone();
             let local_nvdec = self.local_nvdec_executor.clone();
             let local_session = self.local_session.clone();
+            let shutdown_for_tcp = ipc_shutdown.clone();
             let addr = tcp_addr.clone();
 
             info!("starting TCP IPC listener on {} (for container access)", addr);
@@ -243,6 +251,7 @@ impl ClientDaemon {
                     handle_ipc_message(
                         &cached_gpus, &server_conns, &endpoints, &pool_manager,
                         &local_cuda, &local_vulkan, &local_nvenc, &local_nvdec, &local_session,
+                        &shutdown_for_tcp,
                         msg,
                     )
                 }).await {
@@ -264,8 +273,12 @@ impl ClientDaemon {
                 }
             } => {}
             _ = client_shutdown_signal() => {
-                info!("client daemon shutting down");
-                device_manager.remove_all();
+                info!("client daemon shutting down (signal)");
+                device_manager.lock().await.remove_all();
+            }
+            _ = ipc_shutdown.notified() => {
+                info!("client daemon shutting down (IPC shutdown request)");
+                device_manager.lock().await.remove_all();
             }
         }
 
@@ -414,9 +427,10 @@ fn parse_auth_result(
 }
 
 /// Establish a new authenticated connection to a server.
+/// Returns (connection, server_id, discovered_gpus).
 async fn reconnect(
     endpoint: &ServerEndpoint,
-) -> Result<(ServerConn, u16), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(ServerConn, u16, Vec<GpuInfo>), Box<dyn std::error::Error + Send + Sync>> {
     info!("reconnecting to server: {} ({:?})", endpoint.address, endpoint.transport);
 
     match endpoint.transport {
@@ -428,7 +442,7 @@ async fn reconnect(
 /// TCP reconnect.
 async fn reconnect_tcp(
     endpoint: &ServerEndpoint,
-) -> Result<(ServerConn, u16), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(ServerConn, u16, Vec<GpuInfo>), Box<dyn std::error::Error + Send + Sync>> {
     let stream = TcpStream::connect(&endpoint.address).await?;
     let (mut reader, mut writer) = stream.into_split();
 
@@ -461,10 +475,15 @@ async fn reconnect_tcp(
         Message::AuthResult {
             success: true,
             server_id,
+            available_gpus,
             ..
         } => {
             let sid = server_id.unwrap_or(0);
-            info!("reconnected to server {} (id={})", endpoint.address, sid);
+            let discovered_gpus = available_gpus;
+            info!(
+                "reconnected to server {} (id={}, {} GPUs)",
+                endpoint.address, sid, discovered_gpus.len()
+            );
             Ok((
                 ServerConn {
                     transport: TransportConn::Tcp { reader, writer },
@@ -472,6 +491,7 @@ async fn reconnect_tcp(
                     _token: endpoint.token.clone(),
                 },
                 sid,
+                discovered_gpus,
             ))
         }
         _ => Err("reconnection auth failed".into()),
@@ -481,7 +501,7 @@ async fn reconnect_tcp(
 /// QUIC reconnect.
 async fn reconnect_quic(
     endpoint: &ServerEndpoint,
-) -> Result<(ServerConn, u16), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(ServerConn, u16, Vec<GpuInfo>), Box<dyn std::error::Error + Send + Sync>> {
     let quic_conn = rgpu_transport::quic::connect_quic_client(&endpoint.address).await?;
 
     // Hello
@@ -508,10 +528,15 @@ async fn reconnect_quic(
         Message::AuthResult {
             success: true,
             server_id,
+            available_gpus,
             ..
         } => {
             let sid = server_id.unwrap_or(0);
-            info!("reconnected to server {} via QUIC (id={})", endpoint.address, sid);
+            let discovered_gpus = available_gpus;
+            info!(
+                "reconnected to server {} via QUIC (id={}, {} GPUs)",
+                endpoint.address, sid, discovered_gpus.len()
+            );
             Ok((
                 ServerConn {
                     transport: TransportConn::Quic(quic_conn),
@@ -519,6 +544,7 @@ async fn reconnect_quic(
                     _token: endpoint.token.clone(),
                 },
                 sid,
+                discovered_gpus,
             ))
         }
         _ => Err("reconnection auth failed".into()),
@@ -875,10 +901,17 @@ fn handle_ipc_message(
     local_nvenc_executor: &Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
     local_nvdec_executor: &Option<Arc<rgpu_server::nvdec_executor::NvdecExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
+    shutdown_notify: &Arc<tokio::sync::Notify>,
     msg: Message,
 ) -> Option<Message> {
     // Use block_in_place to bridge sync IPC to async forwarding without deadlocks
     match msg {
+        Message::Shutdown => {
+            info!("received Shutdown request via IPC");
+            shutdown_notify.notify_one();
+            Some(Message::ShutdownAck)
+        }
+
         Message::QueryGpus => {
             let gpus = cached_gpus.clone();
             let gpu_list = tokio::task::block_in_place(|| {
@@ -1460,7 +1493,7 @@ async fn forward_to_server(
 
     // Connection is None or failed - try to reconnect
     match reconnect(&endpoint).await {
-        Ok((mut new_conn, _sid)) => {
+        Ok((mut new_conn, _sid, _gpus)) => {
             match new_conn.send_and_receive(msg).await {
                 Ok(response) => {
                     *conn_guard = Some(new_conn);
@@ -1526,10 +1559,12 @@ fn make_error_response(request_id: RequestId, api: ApiType, msg: &str) -> Messag
 // ── Reconnection Loop ────────────────────────────────────────────────
 
 /// Background task that periodically checks for disconnected servers and reconnects.
+/// Also syncs virtual GPU device nodes: install on connect, uninstall on disconnect.
 async fn reconnection_loop(
     server_conns: Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: Arc<GpuPoolManager>,
+    device_manager: Arc<Mutex<crate::device_manager::DeviceManager>>,
 ) {
     let mut backoff_secs: Vec<u64> = Vec::new();
 
@@ -1586,6 +1621,10 @@ async fn reconnection_loop(
                                     ConnectionStatus::Disconnected("heartbeat failed".into()),
                                 )
                                 .await;
+                            // Uninstall virtual GPU devices for the disconnected server
+                            let connected_gpus = pool_manager.get_connected_remote_gpus().await;
+                            device_manager.lock().await.sync_devices(&connected_gpus);
+                            info!("virtual GPU devices synced after server {} disconnect", i);
                         }
                     }
                 }
@@ -1596,15 +1635,25 @@ async fn reconnection_loop(
             debug!("attempting reconnection to server {} (backoff={}s)", i, backoff_secs[i]);
 
             match reconnect(endpoint).await {
-                Ok((new_conn, sid)) => {
+                Ok((new_conn, sid, gpus)) => {
                     let mut guard = conn_slot.lock().await;
                     *guard = Some(new_conn);
 
                     pool_manager.set_server_status(i, ConnectionStatus::Connected).await;
                     pool_manager.add_server_mapping(sid, i).await;
 
+                    // Update the server's GPU list (GPUs come from the AuthResult)
+                    if !gpus.is_empty() {
+                        pool_manager.update_server_gpus(i, gpus).await;
+                    }
+
                     info!("reconnected to server {} (id={})", i, sid);
                     backoff_secs[i] = 1; // Reset backoff
+
+                    // Install virtual GPU devices for the reconnected server
+                    let connected_gpus = pool_manager.get_connected_remote_gpus().await;
+                    device_manager.lock().await.sync_devices(&connected_gpus);
+                    info!("virtual GPU devices synced after server {} reconnect", i);
                 }
                 Err(e) => {
                     debug!("reconnection to server {} failed: {}", i, e);

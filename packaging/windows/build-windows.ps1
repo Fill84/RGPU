@@ -51,6 +51,7 @@ $Artifacts = @(
     "$ProjectRoot\target\release\rgpu_nvenc_interpose.dll",
     "$ProjectRoot\target\release\rgpu_nvdec_interpose.dll",
     "$ProjectRoot\target\release\rgpu_nvml_interpose.dll",
+    "$ProjectRoot\target\release\rgpu_nvapi_interpose.dll",
     "$ProjectRoot\target\release\rgpu_vk_icd.dll"
 )
 
@@ -77,6 +78,7 @@ Copy-Item "$ProjectRoot\target\release\rgpu_cuda_interpose.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_nvenc_interpose.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_nvdec_interpose.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_nvml_interpose.dll" "$StagingDir\"
+Copy-Item "$ProjectRoot\target\release\rgpu_nvapi_interpose.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\target\release\rgpu_vk_icd.dll" "$StagingDir\"
 Copy-Item "$ProjectRoot\packaging\config\rgpu.toml.template" "$StagingDir\"
 Copy-Item "$ProjectRoot\icon.ico" "$StagingDir\"
