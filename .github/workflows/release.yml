@@ -171,6 +171,22 @@ jobs:
       - name: Build .rpm package
         run: cargo generate-rpm -p crates/rgpu-cli --set-metadata 'version="${{ steps.version.outputs.VERSION }}"'
 
+      - name: Stage container interpose libraries
+        run: |
+          mkdir -p container-libs
+          cp target/release/librgpu_cuda_interpose.so container-libs/libcuda.so.1
+          cp target/release/librgpu_nvml_interpose.so container-libs/libnvidia-ml.so.1
+          cp target/release/librgpu_nvenc_interpose.so container-libs/libnvidia-encode.so.1
+          cp target/release/librgpu_nvdec_interpose.so container-libs/libnvcuvid.so.1
+          cp target/release/librgpu_vk_icd.so container-libs/librgpu_vk_icd.so
+          cd container-libs
+          ln -s libcuda.so.1 libcuda.so
+          ln -s libnvidia-ml.so.1 libnvidia-ml.so
+          ln -s libnvidia-encode.so.1 libnvidia-encode.so
+          ln -s libnvcuvid.so.1 libnvcuvid.so
+          cd ..
+          tar czf rgpu-container-libs-linux-x64.tar.gz -C container-libs .
+
       - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
@@ -178,6 +194,7 @@ jobs:
           path: |
             target/debian/*.deb
             target/generate-rpm/*.rpm
+            rgpu-container-libs-linux-x64.tar.gz
 
   # ─── macOS Package (.pkg) ──────────────────────
   build-macos:
@@ -250,6 +267,7 @@ jobs:
             artifacts/**/*.deb
             artifacts/**/*.rpm
             artifacts/**/*.pkg
+            artifacts/**/*.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false

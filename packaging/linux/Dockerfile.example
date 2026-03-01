@@ -1,0 +1,25 @@
+# Example Dockerfile for using RGPU remote GPUs in a container.
+#
+# Build:
+#   docker build -f packaging/linux/Dockerfile.example -t my-gpu-app packaging/linux/
+#
+# Run:
+#   docker run --rm -e RGPU_IPC_ADDRESS=host.docker.internal:9877 my-gpu-app
+#
+# Prerequisites:
+#   RGPU client daemon running on host with ipc_listen_address = "0.0.0.0:9877"
+
+FROM pytorch/pytorch:latest
+
+# Copy RGPU interpose libraries
+COPY container-libs/ /usr/lib/rgpu/
+
+# Configure RGPU: connect to host daemon via TCP IPC
+# Override RGPU_IPC_ADDRESS at runtime if the host IP differs
+ENV RGPU_IPC_ADDRESS=host.docker.internal:9877
+ENV LD_LIBRARY_PATH=/usr/lib/rgpu
+
+# Your application
+COPY . /app
+WORKDIR /app
+CMD ["python", "train.py"]

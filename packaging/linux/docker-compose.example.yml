@@ -1,0 +1,46 @@
+# Example docker-compose.yml for using RGPU remote GPUs in containers.
+#
+# Prerequisites:
+#   1. RGPU client daemon running on the host with TCP IPC enabled:
+#      Add to rgpu.toml: ipc_listen_address = "0.0.0.0:9877"
+#   2. Linux .so interpose libraries built:
+#      Run: ./packaging/linux/build-container-libs.sh
+#
+# Usage:
+#   docker compose -f packaging/linux/docker-compose.example.yml up
+
+services:
+  # Example: PyTorch with remote GPU access
+  pytorch-rgpu:
+    image: pytorch/pytorch:latest
+    volumes:
+      - ./container-libs:/usr/lib/rgpu:ro
+    environment:
+      - RGPU_IPC_ADDRESS=host.docker.internal:9877
+      - LD_LIBRARY_PATH=/usr/lib/rgpu
+    command: >
+      python3 -c "
+      import torch
+      print(f'CUDA available: {torch.cuda.is_available()}')
+      print(f'GPU count: {torch.cuda.device_count()}')
+      for i in range(torch.cuda.device_count()):
+          print(f'  GPU {i}: {torch.cuda.get_device_name(i)}')
+      "
+
+  # Example: CUDA test with remote GPU access
+  cuda-test:
+    image: nvidia/cuda:12.6.0-devel-ubuntu22.04
+    volumes:
+      - ./container-libs:/usr/lib/rgpu:ro
+    environment:
+      - RGPU_IPC_ADDRESS=host.docker.internal:9877
+      - LD_LIBRARY_PATH=/usr/lib/rgpu
+    command: >
+      python3 -c "
+      import ctypes
+      cuda = ctypes.CDLL('libcuda.so.1')
+      print('cuInit:', cuda.cuInit(0))
+      count = ctypes.c_int()
+      cuda.cuDeviceGetCount(ctypes.byref(count))
+      print(f'GPU count: {count.value}')
+      "
