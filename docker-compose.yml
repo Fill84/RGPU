@@ -1,0 +1,39 @@
+# RGPU Integration Test Suite
+#
+# Usage:
+#   docker compose up --build --abort-on-container-exit
+#
+# First run compiles the full Rust workspace (~10-15 min).
+# Subsequent runs use Docker layer cache (~1-2 min if only tests changed).
+
+services:
+  server:
+    build:
+      context: .
+      target: server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - RGPU_TOKEN=test-token-docker
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9876' 2>/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  test-runner:
+    build:
+      context: .
+      target: test-runner
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - RGPU_TOKEN=test-token-docker
+      - RGPU_SERVER=server:9876

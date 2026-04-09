@@ -1,0 +1,13 @@
+target/
+.git/
+.github/
+docs/
+packaging/
+*.exe
+*.ps1
+*.md
+!Cargo.toml
+!crates/**/Cargo.toml
+rgpu.toml
+rgpu-setup.exe
+.claude/
