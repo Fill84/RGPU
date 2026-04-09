@@ -4,6 +4,8 @@
 //! physical devices. Applications using Vulkan will automatically see remote
 //! GPUs when this ICD is registered with the Vulkan loader.
 
+#![allow(non_snake_case)]
+
 use std::ffi::{c_char, CStr};
 use std::sync::OnceLock;
 
@@ -93,6 +95,13 @@ unsafe fn vk_icdGetInstanceProcAddr_impl(
         "vk_icdGetPhysicalDeviceProcAddr" => {
             Some(std::mem::transmute(
                 vk_icdGetPhysicalDeviceProcAddr as *const (),
+            ))
+        }
+
+        // ── Version ──────────────────────────────────────────
+        "vkEnumerateInstanceVersion" => {
+            Some(std::mem::transmute(
+                instance::vkEnumerateInstanceVersion as *const (),
             ))
         }
 

@@ -72,7 +72,6 @@ unsafe fn vkCreateImage_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateImage(
     device: vk::Device,
     p_create_info: *const vk::ImageCreateInfo<'_>,
@@ -111,7 +110,6 @@ unsafe fn vkDestroyImage_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyImage(
     device: vk::Device,
     image: vk::Image,
@@ -163,7 +161,6 @@ unsafe fn vkGetImageMemoryRequirements_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetImageMemoryRequirements(
     device: vk::Device,
     image: vk::Image,
@@ -213,7 +210,6 @@ unsafe fn vkBindImageMemory_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkBindImageMemory(
     device: vk::Device,
     image: vk::Image,
@@ -281,7 +277,6 @@ unsafe fn vkCreateImageView_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateImageView(
     device: vk::Device,
     p_create_info: *const vk::ImageViewCreateInfo<'_>,
@@ -320,7 +315,6 @@ unsafe fn vkDestroyImageView_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyImageView(
     device: vk::Device,
     image_view: vk::ImageView,

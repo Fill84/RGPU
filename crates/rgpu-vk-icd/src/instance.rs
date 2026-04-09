@@ -11,6 +11,19 @@ use crate::send_vulkan_command;
 
 use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
 
+/// Returns the Vulkan API version supported by this ICD (1.3.0).
+/// Required by the loader for ICDs advertising API >= 1.1.
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn vkEnumerateInstanceVersion(
+    p_api_version: *mut u32,
+) -> vk::Result {
+    if p_api_version.is_null() {
+        return vk::Result::ERROR_INITIALIZATION_FAILED;
+    }
+    *p_api_version = vk::make_api_version(0, 1, 3, 0);
+    vk::Result::SUCCESS
+}
+
 #[allow(non_snake_case)]
 unsafe fn vkCreateInstance_impl(
     p_create_info: *const vk::InstanceCreateInfo<'_>,
@@ -66,7 +79,6 @@ unsafe fn vkCreateInstance_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateInstance(
     p_create_info: *const vk::InstanceCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -92,7 +104,6 @@ unsafe fn vkDestroyInstance_impl(
     DispatchableHandle::destroy(disp);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyInstance(
     instance: vk::Instance,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -150,7 +161,6 @@ unsafe fn vkEnumeratePhysicalDevices_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkEnumeratePhysicalDevices(
     instance: vk::Instance,
     p_physical_device_count: *mut u32,
@@ -207,7 +217,6 @@ unsafe fn vkEnumerateInstanceExtensionProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkEnumerateInstanceExtensionProperties(
     p_layer_name: *const c_char,
     p_property_count: *mut u32,
@@ -229,7 +238,6 @@ unsafe fn vkEnumerateInstanceLayerProperties_impl(
     vk::Result::SUCCESS
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkEnumerateInstanceLayerProperties(
     p_property_count: *mut u32,
     _p_properties: *mut vk::LayerProperties,
@@ -296,7 +304,6 @@ unsafe fn vkEnumerateDeviceExtensionProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkEnumerateDeviceExtensionProperties(
     physical_device: vk::PhysicalDevice,
     p_layer_name: *const c_char,

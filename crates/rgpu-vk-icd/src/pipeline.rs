@@ -57,7 +57,6 @@ unsafe fn vkCreateShaderModule_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateShaderModule(
     device: vk::Device,
     p_create_info: *const vk::ShaderModuleCreateInfo<'_>,
@@ -94,7 +93,6 @@ unsafe fn vkDestroyShaderModule_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyShaderModule(
     device: vk::Device,
     shader_module: vk::ShaderModule,
@@ -154,7 +152,6 @@ unsafe fn vkCreateDescriptorSetLayout_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateDescriptorSetLayout(
     device: vk::Device,
     p_create_info: *const vk::DescriptorSetLayoutCreateInfo<'_>,
@@ -191,7 +188,6 @@ unsafe fn vkDestroyDescriptorSetLayout_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyDescriptorSetLayout(
     device: vk::Device,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -266,7 +262,6 @@ unsafe fn vkCreatePipelineLayout_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreatePipelineLayout(
     device: vk::Device,
     p_create_info: *const vk::PipelineLayoutCreateInfo<'_>,
@@ -303,7 +298,6 @@ unsafe fn vkDestroyPipelineLayout_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyPipelineLayout(
     device: vk::Device,
     pipeline_layout: vk::PipelineLayout,
@@ -391,7 +385,6 @@ unsafe fn vkCreateComputePipelines_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateComputePipelines(
     device: vk::Device,
     _pipeline_cache: vk::PipelineCache,
@@ -430,7 +423,6 @@ unsafe fn vkDestroyPipeline_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyPipeline(
     device: vk::Device,
     pipeline: vk::Pipeline,

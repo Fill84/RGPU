@@ -85,7 +85,6 @@ unsafe fn vkCreateDevice_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateDevice(
     physical_device: vk::PhysicalDevice,
     p_create_info: *const vk::DeviceCreateInfo<'_>,
@@ -112,7 +111,6 @@ unsafe fn vkDestroyDevice_impl(
     DispatchableHandle::destroy(disp);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyDevice(
     device: vk::Device,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -152,7 +150,6 @@ unsafe fn vkGetDeviceQueue_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetDeviceQueue(
     device: vk::Device,
     queue_family_index: u32,
@@ -183,7 +180,6 @@ unsafe fn vkDeviceWaitIdle_impl(device: vk::Device) -> vk::Result {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDeviceWaitIdle(device: vk::Device) -> vk::Result {
     rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkDeviceWaitIdle_impl(device))
 }

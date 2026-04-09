@@ -80,7 +80,6 @@ unsafe fn vkCreateCommandPool_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateCommandPool(
     device: vk::Device,
     p_create_info: *const vk::CommandPoolCreateInfo<'_>,
@@ -117,7 +116,6 @@ unsafe fn vkDestroyCommandPool_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyCommandPool(
     device: vk::Device,
     command_pool: vk::CommandPool,
@@ -158,7 +156,6 @@ unsafe fn vkResetCommandPool_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkResetCommandPool(
     device: vk::Device,
     command_pool: vk::CommandPool,
@@ -227,7 +224,6 @@ unsafe fn vkAllocateCommandBuffers_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkAllocateCommandBuffers(
     device: vk::Device,
     p_allocate_info: *const vk::CommandBufferAllocateInfo<'_>,
@@ -289,7 +285,6 @@ unsafe fn vkFreeCommandBuffers_impl(
     let _ = send_vulkan_command(cmd);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkFreeCommandBuffers(
     device: vk::Device,
     command_pool: vk::CommandPool,
@@ -319,7 +314,6 @@ unsafe fn vkBeginCommandBuffer_impl(
     vk::Result::SUCCESS
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkBeginCommandBuffer(
     command_buffer: vk::CommandBuffer,
     _p_begin_info: *const vk::CommandBufferBeginInfo<'_>,
@@ -343,7 +337,6 @@ unsafe fn vkEndCommandBuffer_impl(
     vk::Result::SUCCESS
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkEndCommandBuffer(
     command_buffer: vk::CommandBuffer,
 ) -> vk::Result {
@@ -368,7 +361,6 @@ unsafe fn vkResetCommandBuffer_impl(
     vk::Result::SUCCESS
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkResetCommandBuffer(
     command_buffer: vk::CommandBuffer,
     _flags: vk::CommandBufferResetFlags,
@@ -402,7 +394,6 @@ unsafe fn vkCmdBindPipeline_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdBindPipeline(
     command_buffer: vk::CommandBuffer,
     pipeline_bind_point: vk::PipelineBindPoint,
@@ -460,7 +451,6 @@ unsafe fn vkCmdBindDescriptorSets_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdBindDescriptorSets(
     command_buffer: vk::CommandBuffer,
     pipeline_bind_point: vk::PipelineBindPoint,
@@ -495,7 +485,6 @@ unsafe fn vkCmdDispatch_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdDispatch(
     command_buffer: vk::CommandBuffer,
     group_count_x: u32,
@@ -593,7 +582,6 @@ unsafe fn vkCmdPipelineBarrier_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdPipelineBarrier(
     command_buffer: vk::CommandBuffer,
     src_stage_mask: vk::PipelineStageFlags,
@@ -652,7 +640,6 @@ unsafe fn vkCmdCopyBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdCopyBuffer(
     command_buffer: vk::CommandBuffer,
     src_buffer: vk::Buffer,
@@ -691,7 +678,6 @@ unsafe fn vkCmdFillBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdFillBuffer(
     command_buffer: vk::CommandBuffer,
     dst_buffer: vk::Buffer,
@@ -735,7 +721,6 @@ unsafe fn vkCmdUpdateBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdUpdateBuffer(
     command_buffer: vk::CommandBuffer,
     dst_buffer: vk::Buffer,
@@ -801,7 +786,6 @@ unsafe fn vkCmdBeginRenderPass_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdBeginRenderPass(
     command_buffer: vk::CommandBuffer,
     p_render_pass_begin: *const vk::RenderPassBeginInfo<'_>,
@@ -822,7 +806,6 @@ unsafe fn vkCmdEndRenderPass_impl(command_buffer: vk::CommandBuffer) {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdEndRenderPass(command_buffer: vk::CommandBuffer) {
     rgpu_common::ffi::catch_panic((), || vkCmdEndRenderPass_impl(command_buffer))
 }
@@ -850,7 +833,6 @@ unsafe fn vkCmdDraw_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdDraw(
     command_buffer: vk::CommandBuffer,
     vertex_count: u32,
@@ -886,7 +868,6 @@ unsafe fn vkCmdDrawIndexed_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdDrawIndexed(
     command_buffer: vk::CommandBuffer,
     index_count: u32,
@@ -936,7 +917,6 @@ unsafe fn vkCmdBindVertexBuffers_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdBindVertexBuffers(
     command_buffer: vk::CommandBuffer,
     first_binding: u32,
@@ -973,7 +953,6 @@ unsafe fn vkCmdBindIndexBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdBindIndexBuffer(
     command_buffer: vk::CommandBuffer,
     buffer: vk::Buffer,
@@ -1020,7 +999,6 @@ unsafe fn vkCmdSetViewport_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdSetViewport(
     command_buffer: vk::CommandBuffer,
     first_viewport: u32,
@@ -1063,7 +1041,6 @@ unsafe fn vkCmdSetScissor_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdSetScissor(
     command_buffer: vk::CommandBuffer,
     first_scissor: u32,
@@ -1132,7 +1109,6 @@ unsafe fn vkCmdCopyBufferToImage_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdCopyBufferToImage(
     command_buffer: vk::CommandBuffer,
     src_buffer: vk::Buffer,
@@ -1203,7 +1179,6 @@ unsafe fn vkCmdCopyImageToBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCmdCopyImageToBuffer(
     command_buffer: vk::CommandBuffer,
     src_image: vk::Image,

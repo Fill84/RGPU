@@ -69,7 +69,6 @@ unsafe fn vkAllocateMemory_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkAllocateMemory(
     device: vk::Device,
     p_allocate_info: *const vk::MemoryAllocateInfo<'_>,
@@ -114,7 +113,6 @@ unsafe fn vkFreeMemory_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkFreeMemory(
     device: vk::Device,
     memory: vk::DeviceMemory,
@@ -199,7 +197,6 @@ unsafe fn vkMapMemory_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkMapMemory(
     device: vk::Device,
     memory: vk::DeviceMemory,
@@ -251,7 +248,6 @@ unsafe fn vkUnmapMemory_impl(device: vk::Device, memory: vk::DeviceMemory) {
     });
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkUnmapMemory(device: vk::Device, memory: vk::DeviceMemory) {
     rgpu_common::ffi::catch_panic((), || vkUnmapMemory_impl(device, memory))
 }
@@ -328,7 +324,6 @@ unsafe fn vkFlushMappedMemoryRanges_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkFlushMappedMemoryRanges(
     device: vk::Device,
     memory_range_count: u32,
@@ -406,7 +401,6 @@ unsafe fn vkInvalidateMappedMemoryRanges_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkInvalidateMappedMemoryRanges(
     device: vk::Device,
     memory_range_count: u32,
@@ -465,7 +459,6 @@ unsafe fn vkCreateBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateBuffer(
     device: vk::Device,
     p_create_info: *const vk::BufferCreateInfo<'_>,
@@ -502,7 +495,6 @@ unsafe fn vkDestroyBuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyBuffer(
     device: vk::Device,
     buffer: vk::Buffer,
@@ -550,7 +542,6 @@ unsafe fn vkBindBufferMemory_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkBindBufferMemory(
     device: vk::Device,
     buffer: vk::Buffer,
@@ -601,7 +592,6 @@ unsafe fn vkGetBufferMemoryRequirements_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetBufferMemoryRequirements(
     device: vk::Device,
     buffer: vk::Buffer,

@@ -347,7 +347,6 @@ unsafe fn vkCreateGraphicsPipelines_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateGraphicsPipelines(
     device: vk::Device,
     _pipeline_cache: vk::PipelineCache,

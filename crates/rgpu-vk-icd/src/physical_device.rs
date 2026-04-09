@@ -85,7 +85,6 @@ unsafe fn vkGetPhysicalDeviceProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceProperties(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties,
@@ -107,7 +106,6 @@ unsafe fn vkGetPhysicalDeviceProperties2_impl(
     vkGetPhysicalDeviceProperties(physical_device, &mut (*p_properties).properties);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
@@ -123,7 +121,6 @@ unsafe fn vkGetPhysicalDeviceProperties2KHR_impl(
     vkGetPhysicalDeviceProperties2(physical_device, p_properties);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2KHR(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
@@ -167,7 +164,6 @@ unsafe fn vkGetPhysicalDeviceFeatures_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures,
@@ -186,7 +182,6 @@ unsafe fn vkGetPhysicalDeviceFeatures2_impl(
     vkGetPhysicalDeviceFeatures(physical_device, &mut (*p_features).features);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
@@ -202,7 +197,6 @@ unsafe fn vkGetPhysicalDeviceFeatures2KHR_impl(
     vkGetPhysicalDeviceFeatures2(physical_device, p_features);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2KHR(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
@@ -264,7 +258,6 @@ unsafe fn vkGetPhysicalDeviceMemoryProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties,
@@ -286,7 +279,6 @@ unsafe fn vkGetPhysicalDeviceMemoryProperties2_impl(
     );
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
@@ -302,7 +294,6 @@ unsafe fn vkGetPhysicalDeviceMemoryProperties2KHR_impl(
     vkGetPhysicalDeviceMemoryProperties2(physical_device, p_memory_properties);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2KHR(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
@@ -361,7 +352,6 @@ unsafe fn vkGetPhysicalDeviceQueueFamilyProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
@@ -406,7 +396,6 @@ unsafe fn vkGetPhysicalDeviceQueueFamilyProperties2_impl(
     *p_queue_family_property_count = count;
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
@@ -428,7 +417,6 @@ unsafe fn vkGetPhysicalDeviceQueueFamilyProperties2KHR_impl(
     );
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2KHR(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
@@ -476,7 +464,6 @@ unsafe fn vkGetPhysicalDeviceFormatProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
@@ -503,7 +490,6 @@ unsafe fn vkGetPhysicalDeviceFormatProperties2_impl(
     );
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
@@ -521,7 +507,6 @@ unsafe fn vkGetPhysicalDeviceFormatProperties2KHR_impl(
     vkGetPhysicalDeviceFormatProperties2(physical_device, format, p_format_properties);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2KHR(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
@@ -548,7 +533,6 @@ unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties(
     _physical_device: vk::PhysicalDevice,
     _format: vk::Format,
@@ -574,7 +558,6 @@ unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties2_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2(
     _physical_device: vk::PhysicalDevice,
     _p_format_info: *const c_void,
@@ -599,7 +582,6 @@ unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR_impl(
     );
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
     physical_device: vk::PhysicalDevice,
     p_format_info: *const c_void,

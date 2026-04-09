@@ -50,7 +50,6 @@ unsafe fn vkCreateFence_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateFence(
     device: vk::Device,
     p_create_info: *const vk::FenceCreateInfo<'_>,
@@ -87,7 +86,6 @@ unsafe fn vkDestroyFence_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyFence(
     device: vk::Device,
     fence: vk::Fence,
@@ -139,7 +137,6 @@ unsafe fn vkWaitForFences_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkWaitForFences(
     device: vk::Device,
     fence_count: u32,
@@ -189,7 +186,6 @@ unsafe fn vkResetFences_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkResetFences(
     device: vk::Device,
     fence_count: u32,
@@ -234,7 +230,6 @@ unsafe fn vkGetFenceStatus_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkGetFenceStatus(
     device: vk::Device,
     fence: vk::Fence,
@@ -278,7 +273,6 @@ unsafe fn vkCreateSemaphore_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateSemaphore(
     device: vk::Device,
     _p_create_info: *const vk::SemaphoreCreateInfo<'_>,
@@ -315,7 +309,6 @@ unsafe fn vkDestroySemaphore_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroySemaphore(
     device: vk::Device,
     semaphore: vk::Semaphore,
@@ -455,7 +448,6 @@ unsafe fn vkQueueSubmit_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkQueueSubmit(
     queue: vk::Queue,
     submit_count: u32,
@@ -486,7 +478,6 @@ unsafe fn vkQueueWaitIdle_impl(queue: vk::Queue) -> vk::Result {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkQueueWaitIdle(queue: vk::Queue) -> vk::Result {
     rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkQueueWaitIdle_impl(queue))
 }

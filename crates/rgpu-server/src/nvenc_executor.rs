@@ -189,7 +189,14 @@ impl NvencExecutor {
                     Ok(d) => NvencResponse::MaxSupportedVersion {
                         version: d.get_max_supported_version(),
                     },
-                    Err(e) => e,
+                    Err(_) => {
+                        // Return a default version even when the driver isn't loaded.
+                        // GetMaxSupportedVersion is informational and apps use it to
+                        // check compatibility before opening a session.
+                        NvencResponse::MaxSupportedVersion {
+                            version: (12 << 4) | 2, // NVENC API 12.2
+                        }
+                    }
                 }
             }
 

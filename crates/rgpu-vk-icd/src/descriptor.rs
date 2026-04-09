@@ -63,7 +63,6 @@ unsafe fn vkCreateDescriptorPool_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateDescriptorPool(
     device: vk::Device,
     p_create_info: *const vk::DescriptorPoolCreateInfo<'_>,
@@ -100,7 +99,6 @@ unsafe fn vkDestroyDescriptorPool_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyDescriptorPool(
     device: vk::Device,
     descriptor_pool: vk::DescriptorPool,
@@ -169,7 +167,6 @@ unsafe fn vkAllocateDescriptorSets_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkAllocateDescriptorSets(
     device: vk::Device,
     p_allocate_info: *const vk::DescriptorSetAllocateInfo<'_>,
@@ -223,7 +220,6 @@ unsafe fn vkFreeDescriptorSets_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkFreeDescriptorSets(
     device: vk::Device,
     descriptor_pool: vk::DescriptorPool,
@@ -299,7 +295,6 @@ unsafe fn vkUpdateDescriptorSets_impl(
     let _ = send_vulkan_command(cmd);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkUpdateDescriptorSets(
     device: vk::Device,
     descriptor_write_count: u32,

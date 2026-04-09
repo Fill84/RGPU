@@ -190,7 +190,6 @@ unsafe fn vkCreateRenderPass_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateRenderPass(
     device: vk::Device,
     p_create_info: *const vk::RenderPassCreateInfo<'_>,
@@ -229,7 +228,6 @@ unsafe fn vkDestroyRenderPass_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyRenderPass(
     device: vk::Device,
     render_pass: vk::RenderPass,
@@ -297,7 +295,6 @@ unsafe fn vkCreateFramebuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkCreateFramebuffer(
     device: vk::Device,
     p_create_info: *const vk::FramebufferCreateInfo<'_>,
@@ -336,7 +333,6 @@ unsafe fn vkDestroyFramebuffer_impl(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn vkDestroyFramebuffer(
     device: vk::Device,
     framebuffer: vk::Framebuffer,
