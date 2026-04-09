@@ -113,6 +113,7 @@ enum Commands {
     },
 
     /// Launch the RGPU desktop GUI
+    #[cfg(feature = "ui")]
     Ui {
         /// Server address(es) to monitor (host:port)
         #[arg(short, long)]
@@ -264,6 +265,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("  token = \"{}\"", token);
         }
 
+        #[cfg(feature = "ui")]
         Some(Commands::Ui {
             server: _,
             token: _,
@@ -364,11 +366,20 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
 
         None => {
-            // Default: launch UI when no subcommand is given (e.g. double-click on Windows/macOS)
-            detach_console();
-            let config = rgpu_core::config::default_config_path();
-            info!("launching RGPU UI (default, config: {})", config);
-            rgpu_ui::launch_ui(config, 2)?;
+            #[cfg(feature = "ui")]
+            {
+                // Default: launch UI when no subcommand is given (e.g. double-click on Windows/macOS)
+                detach_console();
+                let config = rgpu_core::config::default_config_path();
+                info!("launching RGPU UI (default, config: {})", config);
+                rgpu_ui::launch_ui(config, 2)?;
+            }
+            #[cfg(not(feature = "ui"))]
+            {
+                eprintln!("RGPU: no subcommand given. Use --help for usage.");
+                eprintln!("Note: UI is not available in this build (compiled without 'ui' feature).");
+                std::process::exit(1);
+            }
         }
     }
 

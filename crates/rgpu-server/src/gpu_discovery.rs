@@ -18,11 +18,100 @@ pub fn discover_gpus(server_id: u16) -> Vec<GpuInfo> {
         }
     }
 
+    // Fall back to CUDA discovery if Vulkan found nothing
+    if gpus.is_empty() {
+        match discover_cuda_gpus(server_id) {
+            Ok(cuda_gpus) => {
+                info!("discovered {} GPU(s) via CUDA fallback", cuda_gpus.len());
+                gpus.extend(cuda_gpus);
+            }
+            Err(e) => {
+                warn!("CUDA GPU discovery also failed: {}", e);
+            }
+        }
+    }
+
     if gpus.is_empty() {
         warn!("no GPUs discovered on this machine");
     }
 
     gpus
+}
+
+/// Fallback GPU discovery using the CUDA driver API.
+/// Used when Vulkan is not available (e.g. Docker/WSL2 with GPU passthrough).
+fn discover_cuda_gpus(server_id: u16) -> Result<Vec<GpuInfo>, Box<dyn std::error::Error>> {
+    use crate::cuda_driver::CudaDriver;
+
+    let driver = CudaDriver::load().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    let ret = driver.init(0);
+    if ret != 0 {
+        return Err(format!("cuInit failed: {}", ret).into());
+    }
+
+    let count = driver.device_get_count().map_err(|e| format!("cuDeviceGetCount failed: {}", e))?;
+
+    let mut gpus = Vec::new();
+
+    for idx in 0..count {
+        let dev = match driver.device_get(idx) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("cuDeviceGet({}) failed: {}", idx, e);
+                continue;
+            }
+        };
+
+        let device_name = driver.device_get_name(dev)
+            .unwrap_or_else(|_| format!("CUDA Device {}", idx));
+
+        let total_memory = driver.device_total_mem(dev)
+            .map(|m| m as u64)
+            .unwrap_or(0);
+
+        let (major, minor) = driver.device_compute_capability(dev)
+            .unwrap_or((0, 0));
+
+        let cuda_compute_capability = if major > 0 {
+            Some((major, minor))
+        } else {
+            None
+        };
+
+        let gpu = GpuInfo {
+            device_name: device_name.clone(),
+            vendor_id: 0x10DE, // NVIDIA
+            device_id: 0,
+            device_type: GpuDeviceType::DiscreteGpu,
+            total_memory,
+            supports_vulkan: false,
+            supports_cuda: true,
+            vulkan_api_version: None,
+            vulkan_driver_version: None,
+            cuda_compute_capability,
+            queue_family_count: 0,
+            memory_heaps: vec![MemoryHeapInfo {
+                size: total_memory,
+                is_device_local: true,
+            }],
+            server_device_index: idx as u32,
+            server_id,
+        };
+
+        info!(
+            "GPU {} (CUDA): {} ({} MB VRAM, CC {}.{})",
+            idx,
+            device_name,
+            total_memory / (1024 * 1024),
+            major,
+            minor,
+        );
+
+        gpus.push(gpu);
+    }
+
+    Ok(gpus)
 }
 
 fn discover_vulkan_gpus(server_id: u16) -> Result<Vec<GpuInfo>, Box<dyn std::error::Error>> {

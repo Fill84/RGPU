@@ -21,11 +21,11 @@ services:
     environment:
       - RGPU_TOKEN=test-token-docker
     healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9876' 2>/dev/null"]
+      test: ["CMD-SHELL", "ss -tln | grep -q ':9876 '"]
       interval: 2s
       timeout: 5s
       retries: 15
-      start_period: 30s
+      start_period: 10s
 
   test-runner:
     build:

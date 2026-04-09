@@ -35,8 +35,16 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build entire workspace in release mode
-RUN cargo build --release --workspace 2>&1
+# Build interpose libraries
+RUN cargo build --release \
+    -p rgpu-cuda-interpose \
+    -p rgpu-vk-icd \
+    -p rgpu-nvml-interpose \
+    -p rgpu-nvenc-interpose \
+    -p rgpu-nvdec-interpose
+
+# Build CLI without UI feature (avoids windowing/eframe deps on headless Linux)
+RUN cargo build --release -p rgpu-cli --no-default-features
 
 # Compile C test programs
 COPY tests/docker/ /build/tests/docker/
@@ -64,6 +72,7 @@ FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04 AS server
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan1 \
+    iproute2 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

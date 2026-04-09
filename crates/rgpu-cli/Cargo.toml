@@ -12,6 +12,10 @@ path = "src/main.rs"
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
+[features]
+default = ["ui"]
+ui = ["dep:rgpu-ui"]
+
 [dependencies]
 rgpu-server = { workspace = true }
 rgpu-client = { workspace = true }
@@ -25,7 +29,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
-rgpu-ui = { workspace = true }
+rgpu-ui = { workspace = true, optional = true }
 libloading = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
