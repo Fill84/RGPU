@@ -27,7 +27,7 @@ impl HandleMap {
 
     /// Register a network handle and return a new local handle.
     pub fn insert(&self, network_handle: NetworkHandle) -> u64 {
-        let local = self.next_local.fetch_add(1, Ordering::Relaxed);
+        let local = self.next_local.fetch_add(1, Ordering::AcqRel);
         self.local_to_network.insert(local, network_handle);
         self.network_to_local.insert(network_handle, local);
         local
@@ -100,7 +100,7 @@ impl HandleAllocator {
         NetworkHandle {
             server_id: self.server_id,
             session_id: self.session_id,
-            resource_id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            resource_id: self.next_id.fetch_add(1, Ordering::AcqRel),
             resource_type,
         }
     }

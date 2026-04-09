@@ -14,8 +14,8 @@ use rgpu_protocol::vulkan_commands::{
 
 // ── Descriptor Pool ─────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateDescriptorPool(
+#[allow(non_snake_case)]
+unsafe fn vkCreateDescriptorPool_impl(
     device: vk::Device,
     p_create_info: *const vk::DescriptorPoolCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -64,7 +64,17 @@ pub unsafe extern "C" fn vkCreateDescriptorPool(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyDescriptorPool(
+pub unsafe extern "C" fn vkCreateDescriptorPool(
+    device: vk::Device,
+    p_create_info: *const vk::DescriptorPoolCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_descriptor_pool: *mut vk::DescriptorPool,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateDescriptorPool_impl(device, p_create_info, _p_allocator, p_descriptor_pool))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyDescriptorPool_impl(
     device: vk::Device,
     descriptor_pool: vk::DescriptorPool,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -90,10 +100,19 @@ pub unsafe extern "C" fn vkDestroyDescriptorPool(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyDescriptorPool(
+    device: vk::Device,
+    descriptor_pool: vk::DescriptorPool,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyDescriptorPool_impl(device, descriptor_pool, _p_allocator))
+}
+
 // ── Descriptor Set Allocation ───────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkAllocateDescriptorSets(
+#[allow(non_snake_case)]
+unsafe fn vkAllocateDescriptorSets_impl(
     device: vk::Device,
     p_allocate_info: *const vk::DescriptorSetAllocateInfo<'_>,
     p_descriptor_sets: *mut vk::DescriptorSet,
@@ -151,7 +170,16 @@ pub unsafe extern "C" fn vkAllocateDescriptorSets(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkFreeDescriptorSets(
+pub unsafe extern "C" fn vkAllocateDescriptorSets(
+    device: vk::Device,
+    p_allocate_info: *const vk::DescriptorSetAllocateInfo<'_>,
+    p_descriptor_sets: *mut vk::DescriptorSet,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkAllocateDescriptorSets_impl(device, p_allocate_info, p_descriptor_sets))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkFreeDescriptorSets_impl(
     device: vk::Device,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_count: u32,
@@ -195,10 +223,20 @@ pub unsafe extern "C" fn vkFreeDescriptorSets(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkFreeDescriptorSets(
+    device: vk::Device,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_count: u32,
+    p_descriptor_sets: *const vk::DescriptorSet,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkFreeDescriptorSets_impl(device, descriptor_pool, descriptor_set_count, p_descriptor_sets))
+}
+
 // ── Update Descriptor Sets ──────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkUpdateDescriptorSets(
+#[allow(non_snake_case)]
+unsafe fn vkUpdateDescriptorSets_impl(
     device: vk::Device,
     descriptor_write_count: u32,
     p_descriptor_writes: *const vk::WriteDescriptorSet<'_>,
@@ -259,4 +297,15 @@ pub unsafe extern "C" fn vkUpdateDescriptorSets(
     };
 
     let _ = send_vulkan_command(cmd);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkUpdateDescriptorSets(
+    device: vk::Device,
+    descriptor_write_count: u32,
+    p_descriptor_writes: *const vk::WriteDescriptorSet<'_>,
+    _descriptor_copy_count: u32,
+    _p_descriptor_copies: *const vk::CopyDescriptorSet<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkUpdateDescriptorSets_impl(device, descriptor_write_count, p_descriptor_writes, _descriptor_copy_count, _p_descriptor_copies))
 }

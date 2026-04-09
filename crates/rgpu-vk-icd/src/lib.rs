@@ -37,28 +37,38 @@ fn get_ipc_client() -> &'static ipc_client::IpcClient {
 
 /// Send a Vulkan command to the daemon via IPC.
 pub fn send_vulkan_command(cmd: VulkanCommand) -> Result<VulkanResponse, String> {
-    get_ipc_client().send_command(cmd)
+    get_ipc_client()
+        .send_command(cmd)
+        .map_err(|e| e.to_string())
 }
 
 // ── ICD Negotiation ─────────────────────────────────────────
 
 /// Negotiate the ICD interface version with the Vulkan loader.
-#[no_mangle]
-pub unsafe extern "C" fn vk_icdNegotiateLoaderICDInterfaceVersion(
+#[allow(non_snake_case)]
+unsafe fn vk_icdNegotiateLoaderICDInterfaceVersion_impl(
     supported_version: *mut u32,
 ) -> i32 {
     if supported_version.is_null() {
         return -3; // VK_ERROR_INITIALIZATION_FAILED
     }
     let requested = *supported_version;
-    *supported_version = std::cmp::min(requested, 5);
+    // ICD interface v7: all functions resolved via vk_icdGetInstanceProcAddr
+    *supported_version = std::cmp::min(requested, 7);
     0 // VK_SUCCESS
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vk_icdNegotiateLoaderICDInterfaceVersion(
+    supported_version: *mut u32,
+) -> i32 {
+    rgpu_common::ffi::catch_panic(-3i32, || vk_icdNegotiateLoaderICDInterfaceVersion_impl(supported_version))
 }
 
 /// Returns function pointers for Vulkan functions.
 /// The Vulkan loader calls this to resolve all Vulkan entry points.
-#[no_mangle]
-pub unsafe extern "C" fn vk_icdGetInstanceProcAddr(
+#[allow(non_snake_case)]
+unsafe fn vk_icdGetInstanceProcAddr_impl(
     _instance: usize,
     p_name: *const c_char,
 ) -> Option<unsafe extern "C" fn()> {
@@ -617,9 +627,25 @@ pub unsafe extern "C" fn vk_icdGetInstanceProcAddr(
     }
 }
 
-/// Returns function pointers for physical device extension functions.
 #[no_mangle]
 pub unsafe extern "C" fn vk_icdGetPhysicalDeviceProcAddr(
+    _instance: usize,
+    p_name: *const c_char,
+) -> Option<unsafe extern "C" fn()> {
+    rgpu_common::ffi::catch_panic_option(|| vk_icdGetPhysicalDeviceProcAddr_impl(_instance, p_name))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vk_icdGetInstanceProcAddr(
+    _instance: usize,
+    p_name: *const c_char,
+) -> Option<unsafe extern "C" fn()> {
+    rgpu_common::ffi::catch_panic_option(|| vk_icdGetInstanceProcAddr_impl(_instance, p_name))
+}
+
+/// Returns function pointers for physical device extension functions.
+#[allow(non_snake_case)]
+unsafe fn vk_icdGetPhysicalDeviceProcAddr_impl(
     _instance: usize,
     p_name: *const c_char,
 ) -> Option<unsafe extern "C" fn()> {

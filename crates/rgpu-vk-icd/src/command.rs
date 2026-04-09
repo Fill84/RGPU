@@ -43,8 +43,8 @@ pub fn take_recorded_commands(local_id: u64) -> Vec<RecordedCommand> {
 
 // ── Command Pool ────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateCommandPool(
+#[allow(non_snake_case)]
+unsafe fn vkCreateCommandPool_impl(
     device: vk::Device,
     p_create_info: *const vk::CommandPoolCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -81,7 +81,17 @@ pub unsafe extern "C" fn vkCreateCommandPool(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyCommandPool(
+pub unsafe extern "C" fn vkCreateCommandPool(
+    device: vk::Device,
+    p_create_info: *const vk::CommandPoolCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_command_pool: *mut vk::CommandPool,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateCommandPool_impl(device, p_create_info, _p_allocator, p_command_pool))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyCommandPool_impl(
     device: vk::Device,
     command_pool: vk::CommandPool,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -108,7 +118,16 @@ pub unsafe extern "C" fn vkDestroyCommandPool(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkResetCommandPool(
+pub unsafe extern "C" fn vkDestroyCommandPool(
+    device: vk::Device,
+    command_pool: vk::CommandPool,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyCommandPool_impl(device, command_pool, _p_allocator))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkResetCommandPool_impl(
     device: vk::Device,
     command_pool: vk::CommandPool,
     flags: vk::CommandPoolResetFlags,
@@ -139,10 +158,19 @@ pub unsafe extern "C" fn vkResetCommandPool(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkResetCommandPool(
+    device: vk::Device,
+    command_pool: vk::CommandPool,
+    flags: vk::CommandPoolResetFlags,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkResetCommandPool_impl(device, command_pool, flags))
+}
+
 // ── Command Buffer Allocation ───────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkAllocateCommandBuffers(
+#[allow(non_snake_case)]
+unsafe fn vkAllocateCommandBuffers_impl(
     device: vk::Device,
     p_allocate_info: *const vk::CommandBufferAllocateInfo<'_>,
     p_command_buffers: *mut vk::CommandBuffer,
@@ -200,7 +228,16 @@ pub unsafe extern "C" fn vkAllocateCommandBuffers(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkFreeCommandBuffers(
+pub unsafe extern "C" fn vkAllocateCommandBuffers(
+    device: vk::Device,
+    p_allocate_info: *const vk::CommandBufferAllocateInfo<'_>,
+    p_command_buffers: *mut vk::CommandBuffer,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkAllocateCommandBuffers_impl(device, p_allocate_info, p_command_buffers))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkFreeCommandBuffers_impl(
     device: vk::Device,
     command_pool: vk::CommandPool,
     command_buffer_count: u32,
@@ -252,10 +289,20 @@ pub unsafe extern "C" fn vkFreeCommandBuffers(
     let _ = send_vulkan_command(cmd);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkFreeCommandBuffers(
+    device: vk::Device,
+    command_pool: vk::CommandPool,
+    command_buffer_count: u32,
+    p_command_buffers: *const vk::CommandBuffer,
+) {
+    rgpu_common::ffi::catch_panic((), || vkFreeCommandBuffers_impl(device, command_pool, command_buffer_count, p_command_buffers))
+}
+
 // ── Command Buffer Recording (client-side batching) ─────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkBeginCommandBuffer(
+#[allow(non_snake_case)]
+unsafe fn vkBeginCommandBuffer_impl(
     command_buffer: vk::CommandBuffer,
     _p_begin_info: *const vk::CommandBufferBeginInfo<'_>,
 ) -> vk::Result {
@@ -273,7 +320,15 @@ pub unsafe extern "C" fn vkBeginCommandBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkEndCommandBuffer(
+pub unsafe extern "C" fn vkBeginCommandBuffer(
+    command_buffer: vk::CommandBuffer,
+    _p_begin_info: *const vk::CommandBufferBeginInfo<'_>,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkBeginCommandBuffer_impl(command_buffer, _p_begin_info))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkEndCommandBuffer_impl(
     command_buffer: vk::CommandBuffer,
 ) -> vk::Result {
     let cb_disp = command_buffer.as_raw() as *const DispatchableHandle;
@@ -289,7 +344,14 @@ pub unsafe extern "C" fn vkEndCommandBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkResetCommandBuffer(
+pub unsafe extern "C" fn vkEndCommandBuffer(
+    command_buffer: vk::CommandBuffer,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkEndCommandBuffer_impl(command_buffer))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkResetCommandBuffer_impl(
     command_buffer: vk::CommandBuffer,
     _flags: vk::CommandBufferResetFlags,
 ) -> vk::Result {
@@ -306,10 +368,18 @@ pub unsafe extern "C" fn vkResetCommandBuffer(
     vk::Result::SUCCESS
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkResetCommandBuffer(
+    command_buffer: vk::CommandBuffer,
+    _flags: vk::CommandBufferResetFlags,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkResetCommandBuffer_impl(command_buffer, _flags))
+}
+
 // ── vkCmd* recording functions ──────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCmdBindPipeline(
+#[allow(non_snake_case)]
+unsafe fn vkCmdBindPipeline_impl(
     command_buffer: vk::CommandBuffer,
     pipeline_bind_point: vk::PipelineBindPoint,
     pipeline: vk::Pipeline,
@@ -333,7 +403,16 @@ pub unsafe extern "C" fn vkCmdBindPipeline(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdBindDescriptorSets(
+pub unsafe extern "C" fn vkCmdBindPipeline(
+    command_buffer: vk::CommandBuffer,
+    pipeline_bind_point: vk::PipelineBindPoint,
+    pipeline: vk::Pipeline,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdBindPipeline_impl(command_buffer, pipeline_bind_point, pipeline))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdBindDescriptorSets_impl(
     command_buffer: vk::CommandBuffer,
     pipeline_bind_point: vk::PipelineBindPoint,
     layout: vk::PipelineLayout,
@@ -382,7 +461,21 @@ pub unsafe extern "C" fn vkCmdBindDescriptorSets(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdDispatch(
+pub unsafe extern "C" fn vkCmdBindDescriptorSets(
+    command_buffer: vk::CommandBuffer,
+    pipeline_bind_point: vk::PipelineBindPoint,
+    layout: vk::PipelineLayout,
+    first_set: u32,
+    descriptor_set_count: u32,
+    p_descriptor_sets: *const vk::DescriptorSet,
+    dynamic_offset_count: u32,
+    p_dynamic_offsets: *const u32,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdBindDescriptorSets_impl(command_buffer, pipeline_bind_point, layout, first_set, descriptor_set_count, p_descriptor_sets, dynamic_offset_count, p_dynamic_offsets))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdDispatch_impl(
     command_buffer: vk::CommandBuffer,
     group_count_x: u32,
     group_count_y: u32,
@@ -403,7 +496,17 @@ pub unsafe extern "C" fn vkCmdDispatch(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdPipelineBarrier(
+pub unsafe extern "C" fn vkCmdDispatch(
+    command_buffer: vk::CommandBuffer,
+    group_count_x: u32,
+    group_count_y: u32,
+    group_count_z: u32,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdDispatch_impl(command_buffer, group_count_x, group_count_y, group_count_z))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdPipelineBarrier_impl(
     command_buffer: vk::CommandBuffer,
     src_stage_mask: vk::PipelineStageFlags,
     dst_stage_mask: vk::PipelineStageFlags,
@@ -491,7 +594,23 @@ pub unsafe extern "C" fn vkCmdPipelineBarrier(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdCopyBuffer(
+pub unsafe extern "C" fn vkCmdPipelineBarrier(
+    command_buffer: vk::CommandBuffer,
+    src_stage_mask: vk::PipelineStageFlags,
+    dst_stage_mask: vk::PipelineStageFlags,
+    dependency_flags: vk::DependencyFlags,
+    memory_barrier_count: u32,
+    p_memory_barriers: *const vk::MemoryBarrier<'_>,
+    buffer_memory_barrier_count: u32,
+    p_buffer_memory_barriers: *const vk::BufferMemoryBarrier<'_>,
+    image_memory_barrier_count: u32,
+    p_image_memory_barriers: *const vk::ImageMemoryBarrier<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdPipelineBarrier_impl(command_buffer, src_stage_mask, dst_stage_mask, dependency_flags, memory_barrier_count, p_memory_barriers, buffer_memory_barrier_count, p_buffer_memory_barriers, image_memory_barrier_count, p_image_memory_barriers))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdCopyBuffer_impl(
     command_buffer: vk::CommandBuffer,
     src_buffer: vk::Buffer,
     dst_buffer: vk::Buffer,
@@ -534,7 +653,18 @@ pub unsafe extern "C" fn vkCmdCopyBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdFillBuffer(
+pub unsafe extern "C" fn vkCmdCopyBuffer(
+    command_buffer: vk::CommandBuffer,
+    src_buffer: vk::Buffer,
+    dst_buffer: vk::Buffer,
+    region_count: u32,
+    p_regions: *const vk::BufferCopy,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdCopyBuffer_impl(command_buffer, src_buffer, dst_buffer, region_count, p_regions))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdFillBuffer_impl(
     command_buffer: vk::CommandBuffer,
     dst_buffer: vk::Buffer,
     dst_offset: vk::DeviceSize,
@@ -562,7 +692,18 @@ pub unsafe extern "C" fn vkCmdFillBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdUpdateBuffer(
+pub unsafe extern "C" fn vkCmdFillBuffer(
+    command_buffer: vk::CommandBuffer,
+    dst_buffer: vk::Buffer,
+    dst_offset: vk::DeviceSize,
+    size: vk::DeviceSize,
+    data: u32,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdFillBuffer_impl(command_buffer, dst_buffer, dst_offset, size, data))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdUpdateBuffer_impl(
     command_buffer: vk::CommandBuffer,
     dst_buffer: vk::Buffer,
     dst_offset: vk::DeviceSize,
@@ -594,10 +735,21 @@ pub unsafe extern "C" fn vkCmdUpdateBuffer(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkCmdUpdateBuffer(
+    command_buffer: vk::CommandBuffer,
+    dst_buffer: vk::Buffer,
+    dst_offset: vk::DeviceSize,
+    data_size: vk::DeviceSize,
+    p_data: *const std::os::raw::c_void,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdUpdateBuffer_impl(command_buffer, dst_buffer, dst_offset, data_size, p_data))
+}
+
 // ── Phase 5: Rendering recording functions ──────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCmdBeginRenderPass(
+#[allow(non_snake_case)]
+unsafe fn vkCmdBeginRenderPass_impl(
     command_buffer: vk::CommandBuffer,
     p_render_pass_begin: *const vk::RenderPassBeginInfo<'_>,
     contents: vk::SubpassContents,
@@ -650,7 +802,16 @@ pub unsafe extern "C" fn vkCmdBeginRenderPass(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdEndRenderPass(command_buffer: vk::CommandBuffer) {
+pub unsafe extern "C" fn vkCmdBeginRenderPass(
+    command_buffer: vk::CommandBuffer,
+    p_render_pass_begin: *const vk::RenderPassBeginInfo<'_>,
+    contents: vk::SubpassContents,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdBeginRenderPass_impl(command_buffer, p_render_pass_begin, contents))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdEndRenderPass_impl(command_buffer: vk::CommandBuffer) {
     let cb_disp = command_buffer.as_raw() as *const DispatchableHandle;
     let local_id = DispatchableHandle::get_id(cb_disp);
 
@@ -662,7 +823,12 @@ pub unsafe extern "C" fn vkCmdEndRenderPass(command_buffer: vk::CommandBuffer) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdDraw(
+pub unsafe extern "C" fn vkCmdEndRenderPass(command_buffer: vk::CommandBuffer) {
+    rgpu_common::ffi::catch_panic((), || vkCmdEndRenderPass_impl(command_buffer))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdDraw_impl(
     command_buffer: vk::CommandBuffer,
     vertex_count: u32,
     instance_count: u32,
@@ -685,7 +851,18 @@ pub unsafe extern "C" fn vkCmdDraw(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdDrawIndexed(
+pub unsafe extern "C" fn vkCmdDraw(
+    command_buffer: vk::CommandBuffer,
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdDraw_impl(command_buffer, vertex_count, instance_count, first_vertex, first_instance))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdDrawIndexed_impl(
     command_buffer: vk::CommandBuffer,
     index_count: u32,
     instance_count: u32,
@@ -710,7 +887,19 @@ pub unsafe extern "C" fn vkCmdDrawIndexed(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdBindVertexBuffers(
+pub unsafe extern "C" fn vkCmdDrawIndexed(
+    command_buffer: vk::CommandBuffer,
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdDrawIndexed_impl(command_buffer, index_count, instance_count, first_index, vertex_offset, first_instance))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdBindVertexBuffers_impl(
     command_buffer: vk::CommandBuffer,
     first_binding: u32,
     binding_count: u32,
@@ -748,7 +937,18 @@ pub unsafe extern "C" fn vkCmdBindVertexBuffers(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdBindIndexBuffer(
+pub unsafe extern "C" fn vkCmdBindVertexBuffers(
+    command_buffer: vk::CommandBuffer,
+    first_binding: u32,
+    binding_count: u32,
+    p_buffers: *const vk::Buffer,
+    p_offsets: *const vk::DeviceSize,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdBindVertexBuffers_impl(command_buffer, first_binding, binding_count, p_buffers, p_offsets))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdBindIndexBuffer_impl(
     command_buffer: vk::CommandBuffer,
     buffer: vk::Buffer,
     offset: vk::DeviceSize,
@@ -774,7 +974,17 @@ pub unsafe extern "C" fn vkCmdBindIndexBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdSetViewport(
+pub unsafe extern "C" fn vkCmdBindIndexBuffer(
+    command_buffer: vk::CommandBuffer,
+    buffer: vk::Buffer,
+    offset: vk::DeviceSize,
+    index_type: vk::IndexType,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdBindIndexBuffer_impl(command_buffer, buffer, offset, index_type))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdSetViewport_impl(
     command_buffer: vk::CommandBuffer,
     first_viewport: u32,
     viewport_count: u32,
@@ -811,7 +1021,17 @@ pub unsafe extern "C" fn vkCmdSetViewport(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdSetScissor(
+pub unsafe extern "C" fn vkCmdSetViewport(
+    command_buffer: vk::CommandBuffer,
+    first_viewport: u32,
+    viewport_count: u32,
+    p_viewports: *const vk::Viewport,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdSetViewport_impl(command_buffer, first_viewport, viewport_count, p_viewports))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdSetScissor_impl(
     command_buffer: vk::CommandBuffer,
     first_scissor: u32,
     scissor_count: u32,
@@ -844,7 +1064,17 @@ pub unsafe extern "C" fn vkCmdSetScissor(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdCopyBufferToImage(
+pub unsafe extern "C" fn vkCmdSetScissor(
+    command_buffer: vk::CommandBuffer,
+    first_scissor: u32,
+    scissor_count: u32,
+    p_scissors: *const vk::Rect2D,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdSetScissor_impl(command_buffer, first_scissor, scissor_count, p_scissors))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdCopyBufferToImage_impl(
     command_buffer: vk::CommandBuffer,
     src_buffer: vk::Buffer,
     dst_image: vk::Image,
@@ -903,7 +1133,19 @@ pub unsafe extern "C" fn vkCmdCopyBufferToImage(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkCmdCopyImageToBuffer(
+pub unsafe extern "C" fn vkCmdCopyBufferToImage(
+    command_buffer: vk::CommandBuffer,
+    src_buffer: vk::Buffer,
+    dst_image: vk::Image,
+    dst_image_layout: vk::ImageLayout,
+    region_count: u32,
+    p_regions: *const vk::BufferImageCopy,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdCopyBufferToImage_impl(command_buffer, src_buffer, dst_image, dst_image_layout, region_count, p_regions))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkCmdCopyImageToBuffer_impl(
     command_buffer: vk::CommandBuffer,
     src_image: vk::Image,
     src_image_layout: vk::ImageLayout,
@@ -959,4 +1201,16 @@ pub unsafe extern "C" fn vkCmdCopyImageToBuffer(
             });
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkCmdCopyImageToBuffer(
+    command_buffer: vk::CommandBuffer,
+    src_image: vk::Image,
+    src_image_layout: vk::ImageLayout,
+    dst_buffer: vk::Buffer,
+    region_count: u32,
+    p_regions: *const vk::BufferImageCopy,
+) {
+    rgpu_common::ffi::catch_panic((), || vkCmdCopyImageToBuffer_impl(command_buffer, src_image, src_image_layout, dst_buffer, region_count, p_regions))
 }

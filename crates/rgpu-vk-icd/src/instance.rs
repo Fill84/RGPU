@@ -11,8 +11,8 @@ use crate::send_vulkan_command;
 
 use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateInstance(
+#[allow(non_snake_case)]
+unsafe fn vkCreateInstance_impl(
     p_create_info: *const vk::InstanceCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
     p_instance: *mut vk::Instance,
@@ -67,7 +67,16 @@ pub unsafe extern "C" fn vkCreateInstance(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyInstance(
+pub unsafe extern "C" fn vkCreateInstance(
+    p_create_info: *const vk::InstanceCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_instance: *mut vk::Instance,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateInstance_impl(p_create_info, _p_allocator, p_instance))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyInstance_impl(
     instance: vk::Instance,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
 ) {
@@ -84,7 +93,15 @@ pub unsafe extern "C" fn vkDestroyInstance(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkEnumeratePhysicalDevices(
+pub unsafe extern "C" fn vkDestroyInstance(
+    instance: vk::Instance,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyInstance_impl(instance, _p_allocator))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkEnumeratePhysicalDevices_impl(
     instance: vk::Instance,
     p_physical_device_count: *mut u32,
     p_physical_devices: *mut vk::PhysicalDevice,
@@ -134,7 +151,16 @@ pub unsafe extern "C" fn vkEnumeratePhysicalDevices(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkEnumerateInstanceExtensionProperties(
+pub unsafe extern "C" fn vkEnumeratePhysicalDevices(
+    instance: vk::Instance,
+    p_physical_device_count: *mut u32,
+    p_physical_devices: *mut vk::PhysicalDevice,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkEnumeratePhysicalDevices_impl(instance, p_physical_device_count, p_physical_devices))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkEnumerateInstanceExtensionProperties_impl(
     p_layer_name: *const c_char,
     p_property_count: *mut u32,
     p_properties: *mut vk::ExtensionProperties,
@@ -182,7 +208,16 @@ pub unsafe extern "C" fn vkEnumerateInstanceExtensionProperties(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkEnumerateInstanceLayerProperties(
+pub unsafe extern "C" fn vkEnumerateInstanceExtensionProperties(
+    p_layer_name: *const c_char,
+    p_property_count: *mut u32,
+    p_properties: *mut vk::ExtensionProperties,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkEnumerateInstanceExtensionProperties_impl(p_layer_name, p_property_count, p_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkEnumerateInstanceLayerProperties_impl(
     p_property_count: *mut u32,
     _p_properties: *mut vk::LayerProperties,
 ) -> vk::Result {
@@ -195,7 +230,15 @@ pub unsafe extern "C" fn vkEnumerateInstanceLayerProperties(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkEnumerateDeviceExtensionProperties(
+pub unsafe extern "C" fn vkEnumerateInstanceLayerProperties(
+    p_property_count: *mut u32,
+    _p_properties: *mut vk::LayerProperties,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkEnumerateInstanceLayerProperties_impl(p_property_count, _p_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkEnumerateDeviceExtensionProperties_impl(
     physical_device: vk::PhysicalDevice,
     p_layer_name: *const c_char,
     p_property_count: *mut u32,
@@ -251,6 +294,16 @@ pub unsafe extern "C" fn vkEnumerateDeviceExtensionProperties(
             vk::Result::SUCCESS
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkEnumerateDeviceExtensionProperties(
+    physical_device: vk::PhysicalDevice,
+    p_layer_name: *const c_char,
+    p_property_count: *mut u32,
+    p_properties: *mut vk::ExtensionProperties,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkEnumerateDeviceExtensionProperties_impl(physical_device, p_layer_name, p_property_count, p_properties))
 }
 
 // ── Helpers ─────────────────────────────────────────────────

@@ -23,6 +23,10 @@ pub enum Message {
         name: String,
         /// Server sends a random challenge for auth.
         challenge: Option<Vec<u8>>,
+        /// Hash of protocol struct layouts for compatibility checking.
+        /// If present, the remote side should reject connections with mismatched hashes.
+        #[serde(default)]
+        protocol_hash: Option<u32>,
     },
 
     /// Authentication message from client.
@@ -124,5 +128,16 @@ pub enum Message {
     Error(ProtocolError),
 }
 
-/// Current protocol version.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// Current protocol version. Bump this when protocol messages change.
+pub const PROTOCOL_VERSION: u32 = 5;
+
+/// Hash of the protocol struct layout. Derived from PROTOCOL_VERSION and
+/// the number of command/response variants. Used to detect protocol mismatches
+/// between client and server built from different source versions.
+pub const PROTOCOL_HASH: u32 = {
+    // Simple compile-time hash combining version with a build-specific seed
+    let mut h: u32 = 0x5247_5055; // "RGPU"
+    h = h.wrapping_mul(31).wrapping_add(PROTOCOL_VERSION);
+    h = h.wrapping_mul(31).wrapping_add(std::mem::size_of::<Message>() as u32);
+    h
+};

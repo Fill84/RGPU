@@ -32,8 +32,8 @@ fn shadow_buffers() -> &'static Mutex<HashMap<u64, ShadowBuffer>> {
 
 // ── vkAllocateMemory ────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkAllocateMemory(
+#[allow(non_snake_case)]
+unsafe fn vkAllocateMemory_impl(
     device: vk::Device,
     p_allocate_info: *const vk::MemoryAllocateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -70,7 +70,17 @@ pub unsafe extern "C" fn vkAllocateMemory(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkFreeMemory(
+pub unsafe extern "C" fn vkAllocateMemory(
+    device: vk::Device,
+    p_allocate_info: *const vk::MemoryAllocateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_memory: *mut vk::DeviceMemory,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkAllocateMemory_impl(device, p_allocate_info, _p_allocator, p_memory))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkFreeMemory_impl(
     device: vk::Device,
     memory: vk::DeviceMemory,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -104,10 +114,19 @@ pub unsafe extern "C" fn vkFreeMemory(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkFreeMemory(
+    device: vk::Device,
+    memory: vk::DeviceMemory,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkFreeMemory_impl(device, memory, _p_allocator))
+}
+
 // ── vkMapMemory ─────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkMapMemory(
+#[allow(non_snake_case)]
+unsafe fn vkMapMemory_impl(
     device: vk::Device,
     memory: vk::DeviceMemory,
     offset: vk::DeviceSize,
@@ -180,10 +199,22 @@ pub unsafe extern "C" fn vkMapMemory(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkMapMemory(
+    device: vk::Device,
+    memory: vk::DeviceMemory,
+    offset: vk::DeviceSize,
+    size: vk::DeviceSize,
+    flags: vk::MemoryMapFlags,
+    pp_data: *mut *mut c_void,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkMapMemory_impl(device, memory, offset, size, flags, pp_data))
+}
+
 // ── vkUnmapMemory ───────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkUnmapMemory(device: vk::Device, memory: vk::DeviceMemory) {
+#[allow(non_snake_case)]
+unsafe fn vkUnmapMemory_impl(device: vk::Device, memory: vk::DeviceMemory) {
     let disp = device.as_raw() as *const DispatchableHandle;
     let dev_local_id = DispatchableHandle::get_id(disp);
 
@@ -220,10 +251,15 @@ pub unsafe extern "C" fn vkUnmapMemory(device: vk::Device, memory: vk::DeviceMem
     });
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkUnmapMemory(device: vk::Device, memory: vk::DeviceMemory) {
+    rgpu_common::ffi::catch_panic((), || vkUnmapMemory_impl(device, memory))
+}
+
 // ── vkFlushMappedMemoryRanges ───────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkFlushMappedMemoryRanges(
+#[allow(non_snake_case)]
+unsafe fn vkFlushMappedMemoryRanges_impl(
     device: vk::Device,
     memory_range_count: u32,
     p_memory_ranges: *const vk::MappedMemoryRange<'_>,
@@ -292,10 +328,19 @@ pub unsafe extern "C" fn vkFlushMappedMemoryRanges(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkFlushMappedMemoryRanges(
+    device: vk::Device,
+    memory_range_count: u32,
+    p_memory_ranges: *const vk::MappedMemoryRange<'_>,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkFlushMappedMemoryRanges_impl(device, memory_range_count, p_memory_ranges))
+}
+
 // ── vkInvalidateMappedMemoryRanges ──────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkInvalidateMappedMemoryRanges(
+#[allow(non_snake_case)]
+unsafe fn vkInvalidateMappedMemoryRanges_impl(
     device: vk::Device,
     memory_range_count: u32,
     p_memory_ranges: *const vk::MappedMemoryRange<'_>,
@@ -361,10 +406,19 @@ pub unsafe extern "C" fn vkInvalidateMappedMemoryRanges(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkInvalidateMappedMemoryRanges(
+    device: vk::Device,
+    memory_range_count: u32,
+    p_memory_ranges: *const vk::MappedMemoryRange<'_>,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkInvalidateMappedMemoryRanges_impl(device, memory_range_count, p_memory_ranges))
+}
+
 // ── Buffer ──────────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateBuffer(
+#[allow(non_snake_case)]
+unsafe fn vkCreateBuffer_impl(
     device: vk::Device,
     p_create_info: *const vk::BufferCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -412,7 +466,17 @@ pub unsafe extern "C" fn vkCreateBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyBuffer(
+pub unsafe extern "C" fn vkCreateBuffer(
+    device: vk::Device,
+    p_create_info: *const vk::BufferCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_buffer: *mut vk::Buffer,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateBuffer_impl(device, p_create_info, _p_allocator, p_buffer))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyBuffer_impl(
     device: vk::Device,
     buffer: vk::Buffer,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -439,7 +503,16 @@ pub unsafe extern "C" fn vkDestroyBuffer(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkBindBufferMemory(
+pub unsafe extern "C" fn vkDestroyBuffer(
+    device: vk::Device,
+    buffer: vk::Buffer,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyBuffer_impl(device, buffer, _p_allocator))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkBindBufferMemory_impl(
     device: vk::Device,
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -478,7 +551,17 @@ pub unsafe extern "C" fn vkBindBufferMemory(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetBufferMemoryRequirements(
+pub unsafe extern "C" fn vkBindBufferMemory(
+    device: vk::Device,
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    memory_offset: vk::DeviceSize,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkBindBufferMemory_impl(device, buffer, memory, memory_offset))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetBufferMemoryRequirements_impl(
     device: vk::Device,
     buffer: vk::Buffer,
     p_memory_requirements: *mut vk::MemoryRequirements,
@@ -516,4 +599,13 @@ pub unsafe extern "C" fn vkGetBufferMemoryRequirements(
         mr.alignment = alignment;
         mr.memory_type_bits = memory_type_bits;
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkGetBufferMemoryRequirements(
+    device: vk::Device,
+    buffer: vk::Buffer,
+    p_memory_requirements: *mut vk::MemoryRequirements,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetBufferMemoryRequirements_impl(device, buffer, p_memory_requirements))
 }

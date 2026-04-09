@@ -296,6 +296,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 protocol_version: rgpu_protocol::messages::PROTOCOL_VERSION,
                 name: "RGPU Info".to_string(),
                 challenge: None,
+                protocol_hash: Some(rgpu_protocol::messages::PROTOCOL_HASH),
             };
             let frame = rgpu_protocol::wire::encode_message(&hello, 0)?;
             writer.write_all(&frame).await?;

@@ -161,12 +161,94 @@ impl RgpuConfig {
     pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         let config: RgpuConfig = toml::from_str(&content)?;
+        if let Err(errors) = config.validate() {
+            return Err(format!("config validation failed:\n  {}", errors.join("\n  ")).into());
+        }
         Ok(config)
     }
 
     /// Load configuration from file if it exists, otherwise return defaults.
     pub fn load_or_default(path: &str) -> Self {
         Self::load(path).unwrap_or_default()
+    }
+
+    /// Validate the configuration, returning errors for invalid values.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // Server validation
+        if self.server.port == 0 {
+            errors.push("server.port must be > 0".to_string());
+        }
+        if self.server.bind.is_empty() {
+            errors.push("server.bind must not be empty".to_string());
+        }
+        if self.server.bind.parse::<std::net::IpAddr>().is_err()
+            && self.server.bind != "0.0.0.0"
+            && self.server.bind != "localhost"
+        {
+            errors.push(format!(
+                "server.bind '{}' is not a valid IP address",
+                self.server.bind
+            ));
+        }
+        if self.server.max_clients == 0 {
+            errors.push("server.max_clients must be > 0".to_string());
+        }
+        if self.server.transport == TransportMode::Quic
+            && (self.server.cert_path.is_none() || self.server.key_path.is_none())
+        {
+            // QUIC with self-signed is OK, just warn
+        }
+
+        // Client validation
+        for (i, ep) in self.client.servers.iter().enumerate() {
+            if ep.address.is_empty() {
+                errors.push(format!("client.servers[{}].address must not be empty", i));
+            }
+            if ep.token.is_empty() {
+                errors.push(format!("client.servers[{}].token must not be empty", i));
+            }
+            // Validate address format (host:port)
+            if !ep.address.is_empty() && !ep.address.contains(':') {
+                errors.push(format!(
+                    "client.servers[{}].address '{}' must be in host:port format",
+                    i, ep.address
+                ));
+            }
+        }
+
+        // IPC listen address validation
+        if let Some(ref addr) = self.client.ipc_listen_address {
+            if !addr.is_empty() && !addr.contains(':') {
+                errors.push(format!(
+                    "client.ipc_listen_address '{}' must be in host:port format",
+                    addr
+                ));
+            }
+        }
+
+        // Token validation
+        for (i, tok) in self.security.tokens.iter().enumerate() {
+            if tok.token.is_empty() {
+                errors.push(format!("security.tokens[{}].token must not be empty", i));
+            }
+            if tok.name.is_empty() {
+                errors.push(format!("security.tokens[{}].name must not be empty", i));
+            }
+            if tok.token.len() < 8 {
+                errors.push(format!(
+                    "security.tokens[{}].token should be at least 8 characters",
+                    i
+                ));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 

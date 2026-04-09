@@ -22,8 +22,8 @@ use rgpu_protocol::vulkan_commands::{
 
 // ── vkCreateGraphicsPipelines ────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateGraphicsPipelines(
+#[allow(non_snake_case)]
+unsafe fn vkCreateGraphicsPipelines_impl(
     device: vk::Device,
     _pipeline_cache: vk::PipelineCache,
     create_info_count: u32,
@@ -345,4 +345,16 @@ pub unsafe extern "C" fn vkCreateGraphicsPipelines(
         Ok(VulkanResponse::Error { code, .. }) => vk::Result::from_raw(code),
         _ => vk::Result::ERROR_UNKNOWN,
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkCreateGraphicsPipelines(
+    device: vk::Device,
+    _pipeline_cache: vk::PipelineCache,
+    create_info_count: u32,
+    p_create_infos: *const vk::GraphicsPipelineCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_pipelines: *mut vk::Pipeline,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateGraphicsPipelines_impl(device, _pipeline_cache, create_info_count, p_create_infos, _p_allocator, p_pipelines))
 }

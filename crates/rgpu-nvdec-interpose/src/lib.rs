@@ -137,8 +137,8 @@ pub extern "C" fn rgpu_interpose_marker() -> c_int {
 /// - Offset 44: nMaxMBCount (u32) - OUTPUT
 /// - Offset 48: nMinWidth (u16) - OUTPUT
 /// - Offset 50: nMinHeight (u16) - OUTPUT
-#[no_mangle]
-pub unsafe extern "C" fn cuvidGetDecoderCaps(caps: *mut c_void) -> CUresult {
+#[allow(non_snake_case)]
+unsafe fn cuvidGetDecoderCaps_impl(caps: *mut c_void) -> CUresult {
     // Initialize logging on first call
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -195,13 +195,18 @@ pub unsafe extern "C" fn cuvidGetDecoderCaps(caps: *mut c_void) -> CUresult {
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidGetDecoderCaps(caps: *mut c_void) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidGetDecoderCaps_impl(caps))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DECODER LIFECYCLE
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Create a decoder. Serializes the entire CUVIDDECODECREATEINFO struct as raw bytes.
-#[no_mangle]
-pub unsafe extern "C" fn cuvidCreateDecoder(
+#[allow(non_snake_case)]
+unsafe fn cuvidCreateDecoder_impl(
     decoder_out: *mut CUvideodecoder,
     params: *mut c_void,
 ) -> CUresult {
@@ -236,9 +241,17 @@ pub unsafe extern "C" fn cuvidCreateDecoder(
     }
 }
 
-/// Destroy a decoder.
 #[no_mangle]
-pub unsafe extern "C" fn cuvidDestroyDecoder(decoder: CUvideodecoder) -> CUresult {
+pub unsafe extern "C" fn cuvidCreateDecoder(
+    decoder_out: *mut CUvideodecoder,
+    params: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCreateDecoder_impl(decoder_out, params))
+}
+
+/// Destroy a decoder.
+#[allow(non_snake_case)]
+unsafe fn cuvidDestroyDecoder_impl(decoder: CUvideodecoder) -> CUresult {
     let local_id = decoder as u64;
     let handle = match handle_store::get_decoder(local_id) {
         Some(h) => h,
@@ -259,14 +272,19 @@ pub unsafe extern "C" fn cuvidDestroyDecoder(decoder: CUvideodecoder) -> CUresul
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidDestroyDecoder(decoder: CUvideodecoder) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidDestroyDecoder_impl(decoder))
+}
+
 /// Decode a picture. Extracts bitstream data from CUVIDPICPARAMS and sends both
 /// the struct and the bitstream data to the server.
 ///
 /// CUVIDPICPARAMS bitstream fields (64-bit):
 /// - Offset 24: nBitstreamDataLen (u32) - length of bitstream
 /// - Offset 32: pBitstreamData (pointer, u64) - pointer to compressed data
-#[no_mangle]
-pub unsafe extern "C" fn cuvidDecodePicture(
+#[allow(non_snake_case)]
+unsafe fn cuvidDecodePicture_impl(
     decoder: CUvideodecoder,
     picparams: *mut c_void,
 ) -> CUresult {
@@ -315,11 +333,19 @@ pub unsafe extern "C" fn cuvidDecodePicture(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidDecodePicture(
+    decoder: CUvideodecoder,
+    picparams: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidDecodePicture_impl(decoder, picparams))
+}
+
 /// Get decode status for a picture index.
 ///
 /// CUVIDGETDECODESTATUS struct: we write decodeStatus at offset 4 (after reserved field).
-#[no_mangle]
-pub unsafe extern "C" fn cuvidGetDecodeStatus(
+#[allow(non_snake_case)]
+unsafe fn cuvidGetDecodeStatus_impl(
     decoder: CUvideodecoder,
     pic_idx: c_int,
     status: *mut c_void,
@@ -356,9 +382,18 @@ pub unsafe extern "C" fn cuvidGetDecodeStatus(
     }
 }
 
-/// Reconfigure decoder for resolution or parameter changes.
 #[no_mangle]
-pub unsafe extern "C" fn cuvidReconfigureDecoder(
+pub unsafe extern "C" fn cuvidGetDecodeStatus(
+    decoder: CUvideodecoder,
+    pic_idx: c_int,
+    status: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidGetDecodeStatus_impl(decoder, pic_idx, status))
+}
+
+/// Reconfigure decoder for resolution or parameter changes.
+#[allow(non_snake_case)]
+unsafe fn cuvidReconfigureDecoder_impl(
     decoder: CUvideodecoder,
     params: *mut c_void,
 ) -> CUresult {
@@ -392,6 +427,14 @@ pub unsafe extern "C" fn cuvidReconfigureDecoder(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidReconfigureDecoder(
+    decoder: CUvideodecoder,
+    params: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidReconfigureDecoder_impl(decoder, params))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FRAME MAPPING
 // ═══════════════════════════════════════════════════════════════════════════
@@ -399,8 +442,8 @@ pub unsafe extern "C" fn cuvidReconfigureDecoder(
 /// Map a decoded video frame, returning a CUDA device pointer and pitch.
 ///
 /// This is the 64-bit version. cuvidMapVideoFrame forwards here too.
-#[no_mangle]
-pub unsafe extern "C" fn cuvidMapVideoFrame64(
+#[allow(non_snake_case)]
+unsafe fn cuvidMapVideoFrame64_impl(
     decoder: CUvideodecoder,
     pic_idx: c_int,
     dev_ptr: *mut u64,
@@ -452,11 +495,22 @@ pub unsafe extern "C" fn cuvidMapVideoFrame64(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidMapVideoFrame64(
+    decoder: CUvideodecoder,
+    pic_idx: c_int,
+    dev_ptr: *mut u64,
+    pitch: *mut c_uint,
+    params: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidMapVideoFrame64_impl(decoder, pic_idx, dev_ptr, pitch, params))
+}
+
 /// Unmap a previously mapped video frame.
 ///
 /// This is the 64-bit version. cuvidUnmapVideoFrame forwards here too.
-#[no_mangle]
-pub unsafe extern "C" fn cuvidUnmapVideoFrame64(
+#[allow(non_snake_case)]
+unsafe fn cuvidUnmapVideoFrame64_impl(
     decoder: CUvideodecoder,
     mapped_frame: u64,
 ) -> CUresult {
@@ -491,11 +545,19 @@ pub unsafe extern "C" fn cuvidUnmapVideoFrame64(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidUnmapVideoFrame64(
+    decoder: CUvideodecoder,
+    mapped_frame: u64,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidUnmapVideoFrame64_impl(decoder, mapped_frame))
+}
+
 // ── 32-bit aliases (forward to 64-bit versions) ─────────────────────────
 
 /// 32-bit version of cuvidMapVideoFrame64. Forwards to the 64-bit version.
-#[no_mangle]
-pub unsafe extern "C" fn cuvidMapVideoFrame(
+#[allow(non_snake_case)]
+unsafe fn cuvidMapVideoFrame_impl(
     decoder: CUvideodecoder,
     pic_idx: c_int,
     dev_ptr: *mut u64,
@@ -505,13 +567,32 @@ pub unsafe extern "C" fn cuvidMapVideoFrame(
     cuvidMapVideoFrame64(decoder, pic_idx, dev_ptr, pitch, params)
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidMapVideoFrame(
+    decoder: CUvideodecoder,
+    pic_idx: c_int,
+    dev_ptr: *mut u64,
+    pitch: *mut c_uint,
+    params: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidMapVideoFrame_impl(decoder, pic_idx, dev_ptr, pitch, params))
+}
+
 /// 32-bit version of cuvidUnmapVideoFrame64. Forwards to the 64-bit version.
+#[allow(non_snake_case)]
+unsafe fn cuvidUnmapVideoFrame_impl(
+    decoder: CUvideodecoder,
+    mapped_frame: u64,
+) -> CUresult {
+    cuvidUnmapVideoFrame64(decoder, mapped_frame)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn cuvidUnmapVideoFrame(
     decoder: CUvideodecoder,
     mapped_frame: u64,
 ) -> CUresult {
-    cuvidUnmapVideoFrame64(decoder, mapped_frame)
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidUnmapVideoFrame_impl(decoder, mapped_frame))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -523,29 +604,52 @@ pub unsafe extern "C" fn cuvidUnmapVideoFrame(
 // These stubs return CUDA_ERROR_NOT_SUPPORTED.
 
 /// Create a video parser (stub - returns NOT_SUPPORTED).
-#[no_mangle]
-pub unsafe extern "C" fn cuvidCreateVideoParser(
+#[allow(non_snake_case)]
+unsafe fn cuvidCreateVideoParser_impl(
     _parser: *mut CUvideoparser,
     _params: *mut c_void,
 ) -> CUresult {
     CUDA_ERROR_NOT_SUPPORTED
 }
 
-/// Parse video data (stub - returns NOT_SUPPORTED).
 #[no_mangle]
-pub unsafe extern "C" fn cuvidParseVideoData(
+pub unsafe extern "C" fn cuvidCreateVideoParser(
+    _parser: *mut CUvideoparser,
+    _params: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCreateVideoParser_impl(_parser, _params))
+}
+
+/// Parse video data (stub - returns NOT_SUPPORTED).
+#[allow(non_snake_case)]
+unsafe fn cuvidParseVideoData_impl(
     _parser: CUvideoparser,
     _packet: *mut c_void,
 ) -> CUresult {
     CUDA_ERROR_NOT_SUPPORTED
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidParseVideoData(
+    _parser: CUvideoparser,
+    _packet: *mut c_void,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidParseVideoData_impl(_parser, _packet))
+}
+
 /// Destroy a video parser (stub - returns NOT_SUPPORTED).
+#[allow(non_snake_case)]
+unsafe fn cuvidDestroyVideoParser_impl(
+    _parser: CUvideoparser,
+) -> CUresult {
+    CUDA_ERROR_NOT_SUPPORTED
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn cuvidDestroyVideoParser(
     _parser: CUvideoparser,
 ) -> CUresult {
-    CUDA_ERROR_NOT_SUPPORTED
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidDestroyVideoParser_impl(_parser))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -553,8 +657,8 @@ pub unsafe extern "C" fn cuvidDestroyVideoParser(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Create a video context lock for multi-threaded decode.
-#[no_mangle]
-pub unsafe extern "C" fn cuvidCtxLockCreate(
+#[allow(non_snake_case)]
+unsafe fn cuvidCtxLockCreate_impl(
     lock_out: *mut CUvideoctxlock,
     ctx: CUcontext,
 ) -> CUresult {
@@ -591,9 +695,17 @@ pub unsafe extern "C" fn cuvidCtxLockCreate(
     }
 }
 
-/// Destroy a video context lock.
 #[no_mangle]
-pub unsafe extern "C" fn cuvidCtxLockDestroy(lock: CUvideoctxlock) -> CUresult {
+pub unsafe extern "C" fn cuvidCtxLockCreate(
+    lock_out: *mut CUvideoctxlock,
+    ctx: CUcontext,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCtxLockCreate_impl(lock_out, ctx))
+}
+
+/// Destroy a video context lock.
+#[allow(non_snake_case)]
+unsafe fn cuvidCtxLockDestroy_impl(lock: CUvideoctxlock) -> CUresult {
     let local_id = lock as u64;
     let handle = match handle_store::get_ctx_lock(local_id) {
         Some(h) => h,
@@ -614,20 +726,41 @@ pub unsafe extern "C" fn cuvidCtxLockDestroy(lock: CUvideoctxlock) -> CUresult {
     }
 }
 
-/// Lock a video context lock (no-op locally, actual locking happens server-side).
 #[no_mangle]
-pub unsafe extern "C" fn cuvidCtxLock(
+pub unsafe extern "C" fn cuvidCtxLockDestroy(lock: CUvideoctxlock) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCtxLockDestroy_impl(lock))
+}
+
+/// Lock a video context lock (no-op locally, actual locking happens server-side).
+#[allow(non_snake_case)]
+unsafe fn cuvidCtxLock_impl(
     _lock: CUvideoctxlock,
     _reserved: c_uint,
 ) -> CUresult {
     CUDA_SUCCESS
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn cuvidCtxLock(
+    _lock: CUvideoctxlock,
+    _reserved: c_uint,
+) -> CUresult {
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCtxLock_impl(_lock, _reserved))
+}
+
 /// Unlock a video context lock (no-op locally, actual unlocking happens server-side).
+#[allow(non_snake_case)]
+unsafe fn cuvidCtxUnlock_impl(
+    _lock: CUvideoctxlock,
+    _reserved: c_uint,
+) -> CUresult {
+    CUDA_SUCCESS
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn cuvidCtxUnlock(
     _lock: CUvideoctxlock,
     _reserved: c_uint,
 ) -> CUresult {
-    CUDA_SUCCESS
+    rgpu_common::ffi::catch_panic(CUDA_ERROR_UNKNOWN, || cuvidCtxUnlock_impl(_lock, _reserved))
 }

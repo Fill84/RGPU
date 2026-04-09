@@ -155,7 +155,10 @@ impl RgpuConnection {
             .map_err(|_| TransportError::ConnectionClosed)
     }
 
-    /// Send a CUDA command and wait for its response.
+    /// Timeout for command responses (covers long-running kernels and large transfers).
+    const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+    /// Send a CUDA command and wait for its response with timeout.
     pub async fn send_cuda_command(
         &self,
         command: rgpu_protocol::cuda_commands::CudaCommand,
@@ -171,7 +174,13 @@ impl RgpuConnection {
         };
         self.send(msg).await?;
 
-        let response = rx.await.map_err(|_| TransportError::ConnectionClosed)?;
+        let response = tokio::time::timeout(Self::COMMAND_TIMEOUT, rx)
+            .await
+            .map_err(|_| {
+                self.pending.remove(&request_id.0);
+                TransportError::Timeout
+            })?
+            .map_err(|_| TransportError::ConnectionClosed)?;
 
         match response {
             Message::CudaResponse { response, .. } => Ok(response),

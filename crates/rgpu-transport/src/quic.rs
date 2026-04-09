@@ -85,13 +85,22 @@ pub async fn connect_quic_client(
         .with_no_client_auth();
 
     client_crypto.alpn_protocols = vec![b"rgpu/1".to_vec()];
-    // Allow self-signed certs for development
+    // Accept self-signed certs in debug builds only
+    #[cfg(debug_assertions)]
     client_crypto.dangerous().set_certificate_verifier(Arc::new(SkipServerVerification));
 
-    let client_config = quinn::ClientConfig::new(Arc::new(
+    let mut transport_config = quinn::TransportConfig::default();
+    // Tune for LAN: larger windows for high-bandwidth, low-latency networks
+    transport_config.send_window(8 * 1024 * 1024); // 8 MB send window
+    transport_config.receive_window(quinn::VarInt::from_u32(8 * 1024 * 1024)); // 8 MB receive window
+    transport_config.stream_receive_window(quinn::VarInt::from_u32(4 * 1024 * 1024)); // 4 MB per stream
+    transport_config.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from_u32(30_000)))); // 30s idle timeout
+
+    let mut client_config = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
             .map_err(|e| TransportError::Quic(e.to_string()))?,
     ));
+    client_config.transport_config(Arc::new(transport_config));
 
     let bind_addr: SocketAddr = "0.0.0.0:0".parse()
         .map_err(|e| TransportError::Quic(format!("invalid bind address: {}", e)))?;
@@ -228,9 +237,11 @@ pub async fn accept_quic_connections(
 }
 
 /// Certificate verifier that accepts any server certificate (development only).
+#[cfg(debug_assertions)]
 #[derive(Debug)]
 struct SkipServerVerification;
 
+#[cfg(debug_assertions)]
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,

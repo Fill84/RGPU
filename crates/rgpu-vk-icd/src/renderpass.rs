@@ -14,8 +14,8 @@ use rgpu_protocol::vulkan_commands::{
 
 // ── vkCreateRenderPass ───────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateRenderPass(
+#[allow(non_snake_case)]
+unsafe fn vkCreateRenderPass_impl(
     device: vk::Device,
     p_create_info: *const vk::RenderPassCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -190,10 +190,20 @@ pub unsafe extern "C" fn vkCreateRenderPass(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkCreateRenderPass(
+    device: vk::Device,
+    p_create_info: *const vk::RenderPassCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_render_pass: *mut vk::RenderPass,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateRenderPass_impl(device, p_create_info, _p_allocator, p_render_pass))
+}
+
 // ── vkDestroyRenderPass ──────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkDestroyRenderPass(
+#[allow(non_snake_case)]
+unsafe fn vkDestroyRenderPass_impl(
     device: vk::Device,
     render_pass: vk::RenderPass,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -219,10 +229,19 @@ pub unsafe extern "C" fn vkDestroyRenderPass(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyRenderPass(
+    device: vk::Device,
+    render_pass: vk::RenderPass,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyRenderPass_impl(device, render_pass, _p_allocator))
+}
+
 // ── vkCreateFramebuffer ──────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateFramebuffer(
+#[allow(non_snake_case)]
+unsafe fn vkCreateFramebuffer_impl(
     device: vk::Device,
     p_create_info: *const vk::FramebufferCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -278,10 +297,20 @@ pub unsafe extern "C" fn vkCreateFramebuffer(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkCreateFramebuffer(
+    device: vk::Device,
+    p_create_info: *const vk::FramebufferCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_framebuffer: *mut vk::Framebuffer,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateFramebuffer_impl(device, p_create_info, _p_allocator, p_framebuffer))
+}
+
 // ── vkDestroyFramebuffer ─────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkDestroyFramebuffer(
+#[allow(non_snake_case)]
+unsafe fn vkDestroyFramebuffer_impl(
     device: vk::Device,
     framebuffer: vk::Framebuffer,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -305,4 +334,13 @@ pub unsafe extern "C" fn vkDestroyFramebuffer(
             framebuffer: handle,
         });
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyFramebuffer(
+    device: vk::Device,
+    framebuffer: vk::Framebuffer,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyFramebuffer_impl(device, framebuffer, _p_allocator))
 }

@@ -9,8 +9,8 @@ use crate::send_vulkan_command;
 
 use rgpu_protocol::vulkan_commands::{DeviceQueueCreateInfo, VulkanCommand, VulkanResponse};
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateDevice(
+#[allow(non_snake_case)]
+unsafe fn vkCreateDevice_impl(
     physical_device: vk::PhysicalDevice,
     p_create_info: *const vk::DeviceCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -86,7 +86,17 @@ pub unsafe extern "C" fn vkCreateDevice(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyDevice(
+pub unsafe extern "C" fn vkCreateDevice(
+    physical_device: vk::PhysicalDevice,
+    p_create_info: *const vk::DeviceCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_device: *mut vk::Device,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateDevice_impl(physical_device, p_create_info, _p_allocator, p_device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyDevice_impl(
     device: vk::Device,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
 ) {
@@ -103,7 +113,15 @@ pub unsafe extern "C" fn vkDestroyDevice(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetDeviceQueue(
+pub unsafe extern "C" fn vkDestroyDevice(
+    device: vk::Device,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyDevice_impl(device, _p_allocator))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetDeviceQueue_impl(
     device: vk::Device,
     queue_family_index: u32,
     queue_index: u32,
@@ -135,7 +153,17 @@ pub unsafe extern "C" fn vkGetDeviceQueue(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDeviceWaitIdle(device: vk::Device) -> vk::Result {
+pub unsafe extern "C" fn vkGetDeviceQueue(
+    device: vk::Device,
+    queue_family_index: u32,
+    queue_index: u32,
+    p_queue: *mut vk::Queue,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetDeviceQueue_impl(device, queue_family_index, queue_index, p_queue))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDeviceWaitIdle_impl(device: vk::Device) -> vk::Result {
     let disp = device.as_raw() as *const DispatchableHandle;
     let local_id = DispatchableHandle::get_id(disp);
 
@@ -153,6 +181,11 @@ pub unsafe extern "C" fn vkDeviceWaitIdle(device: vk::Device) -> vk::Result {
         Ok(VulkanResponse::Error { code, .. }) => vk::Result::from_raw(code),
         _ => vk::Result::ERROR_DEVICE_LOST,
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkDeviceWaitIdle(device: vk::Device) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkDeviceWaitIdle_impl(device))
 }
 
 // ── Helpers ─────────────────────────────────────────────────

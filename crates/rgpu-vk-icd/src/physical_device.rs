@@ -12,8 +12,8 @@ use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
 
 // ── vkGetPhysicalDeviceProperties ───────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceProperties(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceProperties_impl(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties,
 ) {
@@ -85,10 +85,18 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceProperties(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceProperties(
+    physical_device: vk::PhysicalDevice,
+    p_properties: *mut vk::PhysicalDeviceProperties,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceProperties_impl(physical_device, p_properties))
+}
+
 // ── vkGetPhysicalDeviceProperties2 ─────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceProperties2_impl(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
 ) {
@@ -100,17 +108,33 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2(
+    physical_device: vk::PhysicalDevice,
+    p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceProperties2_impl(physical_device, p_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceProperties2KHR_impl(
     physical_device: vk::PhysicalDevice,
     p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
 ) {
     vkGetPhysicalDeviceProperties2(physical_device, p_properties);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceProperties2KHR(
+    physical_device: vk::PhysicalDevice,
+    p_properties: *mut vk::PhysicalDeviceProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceProperties2KHR_impl(physical_device, p_properties))
+}
+
 // ── vkGetPhysicalDeviceFeatures ────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFeatures_impl(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures,
 ) {
@@ -144,7 +168,15 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(
+pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures(
+    physical_device: vk::PhysicalDevice,
+    p_features: *mut vk::PhysicalDeviceFeatures,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFeatures_impl(physical_device, p_features))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFeatures2_impl(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
 ) {
@@ -155,17 +187,33 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(
+    physical_device: vk::PhysicalDevice,
+    p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFeatures2_impl(physical_device, p_features))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFeatures2KHR_impl(
     physical_device: vk::PhysicalDevice,
     p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
 ) {
     vkGetPhysicalDeviceFeatures2(physical_device, p_features);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2KHR(
+    physical_device: vk::PhysicalDevice,
+    p_features: *mut vk::PhysicalDeviceFeatures2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFeatures2KHR_impl(physical_device, p_features))
+}
+
 // ── vkGetPhysicalDeviceMemoryProperties ────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceMemoryProperties_impl(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties,
 ) {
@@ -217,7 +265,15 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2(
+pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties(
+    physical_device: vk::PhysicalDevice,
+    p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceMemoryProperties_impl(physical_device, p_memory_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceMemoryProperties2_impl(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
 ) {
@@ -231,17 +287,33 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2(
+    physical_device: vk::PhysicalDevice,
+    p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceMemoryProperties2_impl(physical_device, p_memory_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceMemoryProperties2KHR_impl(
     physical_device: vk::PhysicalDevice,
     p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
 ) {
     vkGetPhysicalDeviceMemoryProperties2(physical_device, p_memory_properties);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceMemoryProperties2KHR(
+    physical_device: vk::PhysicalDevice,
+    p_memory_properties: *mut vk::PhysicalDeviceMemoryProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceMemoryProperties2KHR_impl(physical_device, p_memory_properties))
+}
+
 // ── vkGetPhysicalDeviceQueueFamilyProperties ───────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceQueueFamilyProperties_impl(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
     p_queue_family_properties: *mut vk::QueueFamilyProperties,
@@ -290,7 +362,16 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2(
+pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties(
+    physical_device: vk::PhysicalDevice,
+    p_queue_family_property_count: *mut u32,
+    p_queue_family_properties: *mut vk::QueueFamilyProperties,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceQueueFamilyProperties_impl(physical_device, p_queue_family_property_count, p_queue_family_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceQueueFamilyProperties2_impl(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
     p_queue_family_properties: *mut vk::QueueFamilyProperties2<'_>,
@@ -326,7 +407,16 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2(
+    physical_device: vk::PhysicalDevice,
+    p_queue_family_property_count: *mut u32,
+    p_queue_family_properties: *mut vk::QueueFamilyProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceQueueFamilyProperties2_impl(physical_device, p_queue_family_property_count, p_queue_family_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceQueueFamilyProperties2KHR_impl(
     physical_device: vk::PhysicalDevice,
     p_queue_family_property_count: *mut u32,
     p_queue_family_properties: *mut vk::QueueFamilyProperties2<'_>,
@@ -338,10 +428,19 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2KHR(
     );
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceQueueFamilyProperties2KHR(
+    physical_device: vk::PhysicalDevice,
+    p_queue_family_property_count: *mut u32,
+    p_queue_family_properties: *mut vk::QueueFamilyProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceQueueFamilyProperties2KHR_impl(physical_device, p_queue_family_property_count, p_queue_family_properties))
+}
+
 // ── vkGetPhysicalDeviceFormatProperties ────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFormatProperties_impl(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
     p_format_properties: *mut vk::FormatProperties,
@@ -377,10 +476,19 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties(
+    physical_device: vk::PhysicalDevice,
+    format: vk::Format,
+    p_format_properties: *mut vk::FormatProperties,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFormatProperties_impl(physical_device, format, p_format_properties))
+}
+
 // ── vkGetPhysicalDeviceFormatProperties2 ───────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFormatProperties2_impl(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
     p_format_properties: *mut vk::FormatProperties2<'_>,
@@ -396,7 +504,16 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2(
+    physical_device: vk::PhysicalDevice,
+    format: vk::Format,
+    p_format_properties: *mut vk::FormatProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFormatProperties2_impl(physical_device, format, p_format_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceFormatProperties2KHR_impl(
     physical_device: vk::PhysicalDevice,
     format: vk::Format,
     p_format_properties: *mut vk::FormatProperties2<'_>,
@@ -404,10 +521,19 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2KHR(
     vkGetPhysicalDeviceFormatProperties2(physical_device, format, p_format_properties);
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceFormatProperties2KHR(
+    physical_device: vk::PhysicalDevice,
+    format: vk::Format,
+    p_format_properties: *mut vk::FormatProperties2<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceFormatProperties2KHR_impl(physical_device, format, p_format_properties))
+}
+
 // ── Sparse image support stubs ─────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties(
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties_impl(
     _physical_device: vk::PhysicalDevice,
     _format: vk::Format,
     _type_: vk::ImageType,
@@ -423,7 +549,21 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2(
+pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties(
+    _physical_device: vk::PhysicalDevice,
+    _format: vk::Format,
+    _type_: vk::ImageType,
+    _samples: vk::SampleCountFlags,
+    _usage: vk::ImageUsageFlags,
+    _tiling: vk::ImageTiling,
+    p_property_count: *mut u32,
+    _p_properties: *mut c_void,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceSparseImageFormatProperties_impl(_physical_device, _format, _type_, _samples, _usage, _tiling, p_property_count, _p_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties2_impl(
     _physical_device: vk::PhysicalDevice,
     _p_format_info: *const c_void,
     p_property_count: *mut u32,
@@ -435,7 +575,17 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2(
+    _physical_device: vk::PhysicalDevice,
+    _p_format_info: *const c_void,
+    p_property_count: *mut u32,
+    _p_properties: *mut c_void,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceSparseImageFormatProperties2_impl(_physical_device, _p_format_info, p_property_count, _p_properties))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR_impl(
     physical_device: vk::PhysicalDevice,
     p_format_info: *const c_void,
     p_property_count: *mut u32,
@@ -447,4 +597,14 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
         p_property_count,
         p_properties,
     );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    physical_device: vk::PhysicalDevice,
+    p_format_info: *const c_void,
+    p_property_count: *mut u32,
+    p_properties: *mut c_void,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetPhysicalDeviceSparseImageFormatProperties2KHR_impl(physical_device, p_format_info, p_property_count, p_properties))
 }

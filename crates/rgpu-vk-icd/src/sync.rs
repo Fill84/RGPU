@@ -12,8 +12,8 @@ use rgpu_protocol::vulkan_commands::{SerializedSubmitInfo, VulkanCommand, Vulkan
 
 // ── Fence ───────────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateFence(
+#[allow(non_snake_case)]
+unsafe fn vkCreateFence_impl(
     device: vk::Device,
     p_create_info: *const vk::FenceCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -51,7 +51,17 @@ pub unsafe extern "C" fn vkCreateFence(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyFence(
+pub unsafe extern "C" fn vkCreateFence(
+    device: vk::Device,
+    p_create_info: *const vk::FenceCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_fence: *mut vk::Fence,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateFence_impl(device, p_create_info, _p_allocator, p_fence))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyFence_impl(
     device: vk::Device,
     fence: vk::Fence,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -78,7 +88,16 @@ pub unsafe extern "C" fn vkDestroyFence(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkWaitForFences(
+pub unsafe extern "C" fn vkDestroyFence(
+    device: vk::Device,
+    fence: vk::Fence,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyFence_impl(device, fence, _p_allocator))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkWaitForFences_impl(
     device: vk::Device,
     fence_count: u32,
     p_fences: *const vk::Fence,
@@ -121,7 +140,18 @@ pub unsafe extern "C" fn vkWaitForFences(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkResetFences(
+pub unsafe extern "C" fn vkWaitForFences(
+    device: vk::Device,
+    fence_count: u32,
+    p_fences: *const vk::Fence,
+    wait_all: vk::Bool32,
+    timeout: u64,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkWaitForFences_impl(device, fence_count, p_fences, wait_all, timeout))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkResetFences_impl(
     device: vk::Device,
     fence_count: u32,
     p_fences: *const vk::Fence,
@@ -160,7 +190,16 @@ pub unsafe extern "C" fn vkResetFences(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkGetFenceStatus(
+pub unsafe extern "C" fn vkResetFences(
+    device: vk::Device,
+    fence_count: u32,
+    p_fences: *const vk::Fence,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkResetFences_impl(device, fence_count, p_fences))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkGetFenceStatus_impl(
     device: vk::Device,
     fence: vk::Fence,
 ) -> vk::Result {
@@ -195,10 +234,18 @@ pub unsafe extern "C" fn vkGetFenceStatus(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetFenceStatus(
+    device: vk::Device,
+    fence: vk::Fence,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkGetFenceStatus_impl(device, fence))
+}
+
 // ── Semaphore ──────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateSemaphore(
+#[allow(non_snake_case)]
+unsafe fn vkCreateSemaphore_impl(
     device: vk::Device,
     _p_create_info: *const vk::SemaphoreCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -232,7 +279,17 @@ pub unsafe extern "C" fn vkCreateSemaphore(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroySemaphore(
+pub unsafe extern "C" fn vkCreateSemaphore(
+    device: vk::Device,
+    _p_create_info: *const vk::SemaphoreCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_semaphore: *mut vk::Semaphore,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateSemaphore_impl(device, _p_create_info, _p_allocator, p_semaphore))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroySemaphore_impl(
     device: vk::Device,
     semaphore: vk::Semaphore,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -258,10 +315,19 @@ pub unsafe extern "C" fn vkDestroySemaphore(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroySemaphore(
+    device: vk::Device,
+    semaphore: vk::Semaphore,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroySemaphore_impl(device, semaphore, _p_allocator))
+}
+
 // ── Queue Submit ────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkQueueSubmit(
+#[allow(non_snake_case)]
+unsafe fn vkQueueSubmit_impl(
     queue: vk::Queue,
     submit_count: u32,
     p_submits: *const vk::SubmitInfo<'_>,
@@ -390,7 +456,17 @@ pub unsafe extern "C" fn vkQueueSubmit(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkQueueWaitIdle(queue: vk::Queue) -> vk::Result {
+pub unsafe extern "C" fn vkQueueSubmit(
+    queue: vk::Queue,
+    submit_count: u32,
+    p_submits: *const vk::SubmitInfo<'_>,
+    fence: vk::Fence,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkQueueSubmit_impl(queue, submit_count, p_submits, fence))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkQueueWaitIdle_impl(queue: vk::Queue) -> vk::Result {
     let q_disp = queue.as_raw() as *const DispatchableHandle;
     let q_local_id = DispatchableHandle::get_id(q_disp);
 
@@ -408,4 +484,9 @@ pub unsafe extern "C" fn vkQueueWaitIdle(queue: vk::Queue) -> vk::Result {
         Ok(VulkanResponse::Error { code, .. }) => vk::Result::from_raw(code),
         _ => vk::Result::ERROR_DEVICE_LOST,
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkQueueWaitIdle(queue: vk::Queue) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkQueueWaitIdle_impl(queue))
 }

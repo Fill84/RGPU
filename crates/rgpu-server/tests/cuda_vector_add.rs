@@ -13,7 +13,7 @@
 //! Run with: cargo test --test cuda_vector_add -- --nocapture
 
 use rgpu_protocol::cuda_commands::{CudaCommand, CudaResponse};
-use rgpu_server::cuda_executor::CudaExecutor;
+use rgpu_server::cuda::CudaExecutor;
 use rgpu_server::gpu_discovery;
 use rgpu_server::session::Session;
 
@@ -105,7 +105,7 @@ fn test_cuda_driver_loads() {
 
 #[test]
 fn test_cuda_executor_device_enumeration() {
-    let gpu_infos = gpu_discovery::discover_gpus();
+    let gpu_infos = gpu_discovery::discover_gpus(0);
     let executor = CudaExecutor::new(gpu_infos.clone());
     let session = Session::new(1, 0, "test".to_string());
 
@@ -169,7 +169,7 @@ fn test_cuda_vector_add() {
         return;
     }
 
-    let gpu_infos = gpu_discovery::discover_gpus();
+    let gpu_infos = gpu_discovery::discover_gpus(0);
     let executor = CudaExecutor::new(gpu_infos);
     let session = Session::new(1, 0, "test".to_string());
 

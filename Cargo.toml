@@ -14,8 +14,15 @@ members = [
     "crates/rgpu-nvenc-interpose",
     "crates/rgpu-nvml-interpose",
     "crates/rgpu-nvapi-interpose",
+    "crates/rgpu-ipc-client",
 ]
 resolver = "2"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
 
 [workspace.package]
 version = "0.1.0"
@@ -69,6 +76,7 @@ rgpu-server = { path = "crates/rgpu-server" }
 rgpu-client = { path = "crates/rgpu-client" }
 rgpu-common = { path = "crates/rgpu-common" }
 rgpu-ui = { path = "crates/rgpu-ui" }
+rgpu-ipc-client = { path = "crates/rgpu-ipc-client" }
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 egui = "0.31"
 egui_extras = { version = "0.31", features = ["datepicker"] }

@@ -12,8 +12,9 @@ pub const MAX_FRAME_SIZE: u32 = 256 * 1024 * 1024;
 pub const HEADER_SIZE: usize = 11;
 
 /// Minimum payload size to attempt LZ4 compression (bytes).
-/// Payloads smaller than this are sent uncompressed to avoid overhead.
-const COMPRESSION_THRESHOLD: usize = 512;
+/// Set to 4KB: for 10GbE+ networks, compression CPU cost exceeds network
+/// savings below this threshold. Original value was 512 bytes.
+const COMPRESSION_THRESHOLD: usize = 4096;
 
 bitflags::bitflags! {
     /// Frame flags byte.

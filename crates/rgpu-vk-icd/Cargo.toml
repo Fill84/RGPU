@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 rgpu-protocol = { workspace = true }
 rgpu-core = { workspace = true }
 rgpu-common = { workspace = true }
+rgpu-ipc-client = { workspace = true }
 ash = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }

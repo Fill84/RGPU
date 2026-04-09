@@ -10,7 +10,7 @@ use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
 use libloading::{Library, Symbol};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// NVENC status code (0 = NV_ENC_SUCCESS).
 pub type NvencStatus = i32;
@@ -42,20 +42,10 @@ pub const NV_ENC_ERR_RESOURCE_REGISTER_FAILED: NvencStatus = 23;
 pub const NV_ENC_ERR_RESOURCE_NOT_REGISTERED: NvencStatus = 24;
 pub const NV_ENC_ERR_RESOURCE_NOT_MAPPED: NvencStatus = 25;
 
-/// NVENC API version for struct versioning and api_version fields: major | (minor << 24).
-/// We use the max supported version from the actual driver (queried at runtime).
-/// Fallback to 12.2 if not yet known.
-const NVENCAPI_VERSION_FALLBACK: u32 = 12 | (2 << 24);
-
 /// Struct version macro: api_version | (struct_ver << 16) | (0x7 << 28).
 /// The `ver` parameter is the struct version number (e.g. 1 for most structs, 2 for function list).
 fn nvenc_struct_version_with_api(api_version: u32, ver: u32) -> u32 {
     api_version | (ver << 16) | (0x7 << 28)
-}
-
-/// Struct version macro using the fallback API version.
-fn nvenc_struct_version(ver: u32) -> u32 {
-    nvenc_struct_version_with_api(NVENCAPI_VERSION_FALLBACK, ver)
 }
 
 // ── NVENC parameter structs (minimal FFI definitions) ─────────────────

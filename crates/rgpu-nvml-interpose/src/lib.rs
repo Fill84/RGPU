@@ -237,8 +237,8 @@ pub extern "C" fn rgpu_interpose_marker() -> c_int {
     1
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn nvmlInit_v2() -> nvmlReturn_t {
+#[allow(non_snake_case)]
+unsafe fn nvmlInit_v2_impl() -> nvmlReturn_t {
     // Initialize tracing (once)
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -309,6 +309,11 @@ pub unsafe extern "C" fn nvmlInit_v2() -> nvmlReturn_t {
     NVML_SUCCESS
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn nvmlInit_v2() -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInit_v2_impl())
+}
+
 /// Check if a local GPU with the given name exists (to avoid double-counting).
 fn has_local_gpu_with_name(state: &NvmlState, name: &str) -> bool {
     if let Some(ref real) = state.real_nvml {
@@ -341,13 +346,18 @@ fn resolve_ipc_path() -> String {
     rgpu_common::platform::default_ipc_path()
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn nvmlInit() -> nvmlReturn_t {
+#[allow(non_snake_case)]
+unsafe fn nvmlInit_impl() -> nvmlReturn_t {
     nvmlInit_v2()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlShutdown() -> nvmlReturn_t {
+pub unsafe extern "C" fn nvmlInit() -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInit_impl())
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlShutdown_impl() -> nvmlReturn_t {
     let mut state = match get_state().lock() {
         Ok(s) => s,
         Err(_) => return NVML_ERROR_UNKNOWN,
@@ -367,7 +377,12 @@ pub unsafe extern "C" fn nvmlShutdown() -> nvmlReturn_t {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetCount_v2(device_count: *mut c_uint) -> nvmlReturn_t {
+pub unsafe extern "C" fn nvmlShutdown() -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlShutdown_impl())
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetCount_v2_impl(device_count: *mut c_uint) -> nvmlReturn_t {
     if device_count.is_null() {
         return NVML_ERROR_INVALID_ARGUMENT;
     }
@@ -383,12 +398,22 @@ pub unsafe extern "C" fn nvmlDeviceGetCount_v2(device_count: *mut c_uint) -> nvm
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetCount(device_count: *mut c_uint) -> nvmlReturn_t {
+pub unsafe extern "C" fn nvmlDeviceGetCount_v2(device_count: *mut c_uint) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetCount_v2_impl(device_count))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetCount_impl(device_count: *mut c_uint) -> nvmlReturn_t {
     nvmlDeviceGetCount_v2(device_count)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex_v2(
+pub unsafe extern "C" fn nvmlDeviceGetCount(device_count: *mut c_uint) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetCount_impl(device_count))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetHandleByIndex_v2_impl(
     index: c_uint,
     device: *mut nvmlDevice_t,
 ) -> nvmlReturn_t {
@@ -419,7 +444,15 @@ pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex_v2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex(
+pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex_v2(
+    index: c_uint,
+    device: *mut nvmlDevice_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetHandleByIndex_v2_impl(index, device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetHandleByIndex_impl(
     index: c_uint,
     device: *mut nvmlDevice_t,
 ) -> nvmlReturn_t {
@@ -427,7 +460,15 @@ pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetName(
+pub unsafe extern "C" fn nvmlDeviceGetHandleByIndex(
+    index: c_uint,
+    device: *mut nvmlDevice_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetHandleByIndex_impl(index, device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetName_impl(
     device: nvmlDevice_t,
     name: *mut c_char,
     length: c_uint,
@@ -457,7 +498,16 @@ pub unsafe extern "C" fn nvmlDeviceGetName(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetUUID(
+pub unsafe extern "C" fn nvmlDeviceGetName(
+    device: nvmlDevice_t,
+    name: *mut c_char,
+    length: c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetName_impl(device, name, length))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetUUID_impl(
     device: nvmlDevice_t,
     uuid: *mut c_char,
     length: c_uint,
@@ -491,7 +541,16 @@ pub unsafe extern "C" fn nvmlDeviceGetUUID(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetMemoryInfo(
+pub unsafe extern "C" fn nvmlDeviceGetUUID(
+    device: nvmlDevice_t,
+    uuid: *mut c_char,
+    length: c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetUUID_impl(device, uuid, length))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetMemoryInfo_impl(
     device: nvmlDevice_t,
     memory: *mut nvmlMemory_t,
 ) -> nvmlReturn_t {
@@ -525,7 +584,15 @@ pub unsafe extern "C" fn nvmlDeviceGetMemoryInfo(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetTemperature(
+pub unsafe extern "C" fn nvmlDeviceGetMemoryInfo(
+    device: nvmlDevice_t,
+    memory: *mut nvmlMemory_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetMemoryInfo_impl(device, memory))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetTemperature_impl(
     device: nvmlDevice_t,
     sensor_type: c_int,
     temp: *mut c_uint,
@@ -550,7 +617,16 @@ pub unsafe extern "C" fn nvmlDeviceGetTemperature(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetPowerUsage(
+pub unsafe extern "C" fn nvmlDeviceGetTemperature(
+    device: nvmlDevice_t,
+    sensor_type: c_int,
+    temp: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetTemperature_impl(device, sensor_type, temp))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetPowerUsage_impl(
     device: nvmlDevice_t,
     power: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -574,7 +650,15 @@ pub unsafe extern "C" fn nvmlDeviceGetPowerUsage(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetUtilizationRates(
+pub unsafe extern "C" fn nvmlDeviceGetPowerUsage(
+    device: nvmlDevice_t,
+    power: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetPowerUsage_impl(device, power))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetUtilizationRates_impl(
     device: nvmlDevice_t,
     utilization: *mut nvmlUtilization_t,
 ) -> nvmlReturn_t {
@@ -599,7 +683,15 @@ pub unsafe extern "C" fn nvmlDeviceGetUtilizationRates(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetPciInfo_v3(
+pub unsafe extern "C" fn nvmlDeviceGetUtilizationRates(
+    device: nvmlDevice_t,
+    utilization: *mut nvmlUtilization_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetUtilizationRates_impl(device, utilization))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetPciInfo_v3_impl(
     device: nvmlDevice_t,
     pci: *mut nvmlPciInfo_t,
 ) -> nvmlReturn_t {
@@ -647,7 +739,15 @@ pub unsafe extern "C" fn nvmlDeviceGetPciInfo_v3(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetPciInfo(
+pub unsafe extern "C" fn nvmlDeviceGetPciInfo_v3(
+    device: nvmlDevice_t,
+    pci: *mut nvmlPciInfo_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetPciInfo_v3_impl(device, pci))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetPciInfo_impl(
     device: nvmlDevice_t,
     pci: *mut nvmlPciInfo_t,
 ) -> nvmlReturn_t {
@@ -655,7 +755,15 @@ pub unsafe extern "C" fn nvmlDeviceGetPciInfo(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetCudaComputeCapability(
+pub unsafe extern "C" fn nvmlDeviceGetPciInfo(
+    device: nvmlDevice_t,
+    pci: *mut nvmlPciInfo_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetPciInfo_impl(device, pci))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetCudaComputeCapability_impl(
     device: nvmlDevice_t,
     major: *mut c_int,
     minor: *mut c_int,
@@ -692,7 +800,16 @@ pub unsafe extern "C" fn nvmlDeviceGetCudaComputeCapability(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetMinorNumber(
+pub unsafe extern "C" fn nvmlDeviceGetCudaComputeCapability(
+    device: nvmlDevice_t,
+    major: *mut c_int,
+    minor: *mut c_int,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetCudaComputeCapability_impl(device, major, minor))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetMinorNumber_impl(
     device: nvmlDevice_t,
     minor_number: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -722,7 +839,15 @@ pub unsafe extern "C" fn nvmlDeviceGetMinorNumber(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetIndex(
+pub unsafe extern "C" fn nvmlDeviceGetMinorNumber(
+    device: nvmlDevice_t,
+    minor_number: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetMinorNumber_impl(device, minor_number))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetIndex_impl(
     device: nvmlDevice_t,
     index: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -751,7 +876,15 @@ pub unsafe extern "C" fn nvmlDeviceGetIndex(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetHandleByUUID(
+pub unsafe extern "C" fn nvmlDeviceGetIndex(
+    device: nvmlDevice_t,
+    index: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetIndex_impl(device, index))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetHandleByUUID_impl(
     uuid: *const c_char,
     device: *mut nvmlDevice_t,
 ) -> nvmlReturn_t {
@@ -811,7 +944,15 @@ pub unsafe extern "C" fn nvmlDeviceGetHandleByUUID(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId_v2(
+pub unsafe extern "C" fn nvmlDeviceGetHandleByUUID(
+    uuid: *const c_char,
+    device: *mut nvmlDevice_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetHandleByUUID_impl(uuid, device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetHandleByPciBusId_v2_impl(
     pci_bus_id: *const c_char,
     device: *mut nvmlDevice_t,
 ) -> nvmlReturn_t {
@@ -869,7 +1010,15 @@ pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId_v2(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId(
+pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId_v2(
+    pci_bus_id: *const c_char,
+    device: *mut nvmlDevice_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetHandleByPciBusId_v2_impl(pci_bus_id, device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetHandleByPciBusId_impl(
     pci_bus_id: *const c_char,
     device: *mut nvmlDevice_t,
 ) -> nvmlReturn_t {
@@ -877,7 +1026,15 @@ pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlSystemGetDriverVersion(
+pub unsafe extern "C" fn nvmlDeviceGetHandleByPciBusId(
+    pci_bus_id: *const c_char,
+    device: *mut nvmlDevice_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetHandleByPciBusId_impl(pci_bus_id, device))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlSystemGetDriverVersion_impl(
     version: *mut c_char,
     length: c_uint,
 ) -> nvmlReturn_t {
@@ -894,7 +1051,15 @@ pub unsafe extern "C" fn nvmlSystemGetDriverVersion(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlSystemGetNVMLVersion(
+pub unsafe extern "C" fn nvmlSystemGetDriverVersion(
+    version: *mut c_char,
+    length: c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlSystemGetDriverVersion_impl(version, length))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlSystemGetNVMLVersion_impl(
     version: *mut c_char,
     length: c_uint,
 ) -> nvmlReturn_t {
@@ -910,7 +1075,15 @@ pub unsafe extern "C" fn nvmlSystemGetNVMLVersion(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlErrorString(result: nvmlReturn_t) -> *const c_char {
+pub unsafe extern "C" fn nvmlSystemGetNVMLVersion(
+    version: *mut c_char,
+    length: c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlSystemGetNVMLVersion_impl(version, length))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlErrorString_impl(result: nvmlReturn_t) -> *const c_char {
     let state = match get_state().lock() {
         Ok(s) => s,
         Err(_) => return b"Unknown Error\0".as_ptr() as *const c_char,
@@ -929,6 +1102,11 @@ pub unsafe extern "C" fn nvmlErrorString(result: nvmlReturn_t) -> *const c_char 
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn nvmlErrorString(result: nvmlReturn_t) -> *const c_char {
+    rgpu_common::ffi::catch_panic(b"Unknown Error\0".as_ptr() as *const c_char, || nvmlErrorString_impl(result))
+}
+
 // ── Process queries (stubs for remote GPUs) ────────────────────────────
 
 #[repr(C)]
@@ -939,8 +1117,8 @@ pub struct nvmlProcessInfo_t {
     pub computeInstanceId: c_uint,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetComputeRunningProcesses_v3(
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetComputeRunningProcesses_v3_impl(
     device: nvmlDevice_t,
     info_count: *mut c_uint,
     _infos: *mut nvmlProcessInfo_t,
@@ -961,7 +1139,16 @@ pub unsafe extern "C" fn nvmlDeviceGetComputeRunningProcesses_v3(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetGraphicsRunningProcesses_v3(
+pub unsafe extern "C" fn nvmlDeviceGetComputeRunningProcesses_v3(
+    device: nvmlDevice_t,
+    info_count: *mut c_uint,
+    _infos: *mut nvmlProcessInfo_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetComputeRunningProcesses_v3_impl(device, info_count, _infos))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetGraphicsRunningProcesses_v3_impl(
     device: nvmlDevice_t,
     info_count: *mut c_uint,
     _infos: *mut nvmlProcessInfo_t,
@@ -979,10 +1166,44 @@ pub unsafe extern "C" fn nvmlDeviceGetGraphicsRunningProcesses_v3(
     NVML_SUCCESS
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn nvmlDeviceGetGraphicsRunningProcesses_v3(
+    device: nvmlDevice_t,
+    info_count: *mut c_uint,
+    _infos: *mut nvmlProcessInfo_t,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetGraphicsRunningProcesses_v3_impl(device, info_count, _infos))
+}
+
 // ── Additional NVML functions commonly queried ─────────────────────────
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetClockInfo_impl(
+    device: nvmlDevice_t,
+    _clock_type: c_int,
+    clock: *mut c_uint,
+) -> nvmlReturn_t {
+    if clock.is_null() {
+        return NVML_ERROR_INVALID_ARGUMENT;
+    }
+    if is_remote_handle(device) {
+        *clock = 0;
+        return NVML_SUCCESS;
+    }
+    NVML_ERROR_NOT_SUPPORTED
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn nvmlDeviceGetClockInfo(
+    device: nvmlDevice_t,
+    _clock_type: c_int,
+    clock: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetClockInfo_impl(device, _clock_type, clock))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetMaxClockInfo_impl(
     device: nvmlDevice_t,
     _clock_type: c_int,
     clock: *mut c_uint,
@@ -1003,18 +1224,11 @@ pub unsafe extern "C" fn nvmlDeviceGetMaxClockInfo(
     _clock_type: c_int,
     clock: *mut c_uint,
 ) -> nvmlReturn_t {
-    if clock.is_null() {
-        return NVML_ERROR_INVALID_ARGUMENT;
-    }
-    if is_remote_handle(device) {
-        *clock = 0;
-        return NVML_SUCCESS;
-    }
-    NVML_ERROR_NOT_SUPPORTED
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetMaxClockInfo_impl(device, _clock_type, clock))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetFanSpeed(
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetFanSpeed_impl(
     device: nvmlDevice_t,
     speed: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -1029,7 +1243,15 @@ pub unsafe extern "C" fn nvmlDeviceGetFanSpeed(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetDisplayActive(
+pub unsafe extern "C" fn nvmlDeviceGetFanSpeed(
+    device: nvmlDevice_t,
+    speed: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetFanSpeed_impl(device, speed))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetDisplayActive_impl(
     device: nvmlDevice_t,
     is_active: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -1044,7 +1266,15 @@ pub unsafe extern "C" fn nvmlDeviceGetDisplayActive(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetDisplayMode(
+pub unsafe extern "C" fn nvmlDeviceGetDisplayActive(
+    device: nvmlDevice_t,
+    is_active: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetDisplayActive_impl(device, is_active))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetDisplayMode_impl(
     device: nvmlDevice_t,
     display: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -1059,7 +1289,15 @@ pub unsafe extern "C" fn nvmlDeviceGetDisplayMode(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetPersistenceMode(
+pub unsafe extern "C" fn nvmlDeviceGetDisplayMode(
+    device: nvmlDevice_t,
+    display: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetDisplayMode_impl(device, display))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetPersistenceMode_impl(
     device: nvmlDevice_t,
     mode: *mut c_uint,
 ) -> nvmlReturn_t {
@@ -1074,7 +1312,15 @@ pub unsafe extern "C" fn nvmlDeviceGetPersistenceMode(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nvmlDeviceGetPerformanceState(
+pub unsafe extern "C" fn nvmlDeviceGetPersistenceMode(
+    device: nvmlDevice_t,
+    mode: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetPersistenceMode_impl(device, mode))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetPerformanceState_impl(
     device: nvmlDevice_t,
     p_state: *mut c_int,
 ) -> nvmlReturn_t {
@@ -1089,7 +1335,42 @@ pub unsafe extern "C" fn nvmlDeviceGetPerformanceState(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn nvmlDeviceGetPerformanceState(
+    device: nvmlDevice_t,
+    p_state: *mut c_int,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetPerformanceState_impl(device, p_state))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetEncoderUtilization_impl(
+    device: nvmlDevice_t,
+    utilization: *mut c_uint,
+    sampling_period: *mut c_uint,
+) -> nvmlReturn_t {
+    if is_remote_handle(device) {
+        if !utilization.is_null() {
+            *utilization = 0;
+        }
+        if !sampling_period.is_null() {
+            *sampling_period = 0;
+        }
+        return NVML_SUCCESS;
+    }
+    NVML_ERROR_NOT_SUPPORTED
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn nvmlDeviceGetEncoderUtilization(
+    device: nvmlDevice_t,
+    utilization: *mut c_uint,
+    sampling_period: *mut c_uint,
+) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetEncoderUtilization_impl(device, utilization, sampling_period))
+}
+
+#[allow(non_snake_case)]
+unsafe fn nvmlDeviceGetDecoderUtilization_impl(
     device: nvmlDevice_t,
     utilization: *mut c_uint,
     sampling_period: *mut c_uint,
@@ -1112,14 +1393,5 @@ pub unsafe extern "C" fn nvmlDeviceGetDecoderUtilization(
     utilization: *mut c_uint,
     sampling_period: *mut c_uint,
 ) -> nvmlReturn_t {
-    if is_remote_handle(device) {
-        if !utilization.is_null() {
-            *utilization = 0;
-        }
-        if !sampling_period.is_null() {
-            *sampling_period = 0;
-        }
-        return NVML_SUCCESS;
-    }
-    NVML_ERROR_NOT_SUPPORTED
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlDeviceGetDecoderUtilization_impl(device, utilization, sampling_period))
 }

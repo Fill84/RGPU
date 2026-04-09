@@ -7,17 +7,17 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 use rgpu_protocol::gpu_info::GpuInfo;
-use rgpu_protocol::messages::{Message, PROTOCOL_VERSION};
+use rgpu_protocol::messages::{Message, PROTOCOL_HASH, PROTOCOL_VERSION};
 
 use rgpu_core::config::{ServerConfig, TransportMode};
 use rgpu_transport::auth;
 use rgpu_transport::connection::RgpuConnection;
 use rgpu_transport::tls;
 
-use crate::cuda_executor::CudaExecutor;
+use crate::cuda::CudaExecutor;
 use crate::nvdec_executor::NvdecExecutor;
 use crate::nvenc_executor::NvencExecutor;
-use crate::vulkan_executor::VulkanExecutor;
+use crate::vulkan::VulkanExecutor;
 use crate::gpu_discovery;
 use crate::session::Session;
 
@@ -52,6 +52,41 @@ impl ServerMetrics {
     }
 }
 
+/// Tracks per-IP connection attempt timestamps for rate limiting.
+struct ConnectionRateLimiter {
+    /// IP -> list of attempt timestamps (kept sorted, pruned on check)
+    attempts: dashmap::DashMap<std::net::IpAddr, Vec<std::time::Instant>>,
+}
+
+impl ConnectionRateLimiter {
+    fn new() -> Self {
+        Self {
+            attempts: dashmap::DashMap::new(),
+        }
+    }
+
+    /// Check if a connection from this IP should be rate-limited.
+    /// Returns true if the connection is allowed, false if rate-limited.
+    fn check_rate(&self, ip: std::net::IpAddr) -> bool {
+        const MAX_ATTEMPTS: usize = 10;
+        const WINDOW: Duration = Duration::from_secs(60);
+
+        let now = std::time::Instant::now();
+        let mut entry = self.attempts.entry(ip).or_insert_with(Vec::new);
+        let timestamps = entry.value_mut();
+
+        // Prune old entries outside the window
+        timestamps.retain(|t| now.duration_since(*t) < WINDOW);
+
+        if timestamps.len() >= MAX_ATTEMPTS {
+            return false;
+        }
+
+        timestamps.push(now);
+        true
+    }
+}
+
 /// The main RGPU server. Listens for incoming connections and serves GPU commands.
 pub struct RgpuServer {
     config: ServerConfig,
@@ -64,6 +99,8 @@ pub struct RgpuServer {
     /// Accepted authentication tokens (empty = no auth required)
     accepted_tokens: Vec<rgpu_core::config::TokenEntry>,
     metrics: Arc<ServerMetrics>,
+    /// Per-IP connection rate limiter
+    rate_limiter: Arc<ConnectionRateLimiter>,
 }
 
 impl RgpuServer {
@@ -88,6 +125,7 @@ impl RgpuServer {
             next_session_id: AtomicU32::new(1),
             accepted_tokens,
             metrics: Arc::new(ServerMetrics::new()),
+            rate_limiter: Arc::new(ConnectionRateLimiter::new()),
         }
     }
 
@@ -228,6 +266,7 @@ impl RgpuServer {
 
         let active_sessions = Arc::new(AtomicU32::new(0));
         let max_clients = self.config.max_clients;
+        let rate_limiter = self.rate_limiter.clone();
 
         loop {
             let tcp_accept = listener.accept();
@@ -237,6 +276,13 @@ impl RgpuServer {
                 result = tcp_accept => {
                     let (tcp_stream, peer_addr) = result?;
                     info!("new connection from {}", peer_addr);
+
+                    // Rate limit per IP
+                    if !rate_limiter.check_rate(peer_addr.ip()) {
+                        warn!("connection from {} rejected: rate limited", peer_addr);
+                        drop(tcp_stream);
+                        continue;
+                    }
 
                     // Enforce connection limit
                     let current = active_sessions.load(Ordering::Relaxed);
@@ -725,17 +771,37 @@ impl RgpuServer {
             Message::Hello {
                 protocol_version,
                 name,
+                protocol_hash,
                 ..
             } => {
                 info!(
                     session_id = session.session_id,
                     "Hello from '{}' (protocol v{})", name, protocol_version
                 );
+
+                // Validate protocol compatibility
+                if protocol_version != PROTOCOL_VERSION {
+                    warn!(
+                        session_id = session.session_id,
+                        "protocol version mismatch: client v{} vs server v{}", protocol_version, PROTOCOL_VERSION
+                    );
+                }
+                if let Some(hash) = protocol_hash {
+                    if hash != PROTOCOL_HASH {
+                        warn!(
+                            session_id = session.session_id,
+                            "protocol hash mismatch: client {:#x} vs server {:#x} — binary incompatibility likely",
+                            hash, PROTOCOL_HASH
+                        );
+                    }
+                }
+
                 let challenge = auth::generate_challenge(32);
                 Some(Message::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     name: "RGPU Server".to_string(),
                     challenge: Some(challenge),
+                    protocol_hash: Some(PROTOCOL_HASH),
                 })
             }
 

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rgpu_common::platform::default_ipc_path;
 use rgpu_protocol::gpu_info::GpuInfo;
-use rgpu_protocol::messages::{Message, PROTOCOL_VERSION};
+use rgpu_protocol::messages::{Message, PROTOCOL_HASH, PROTOCOL_VERSION};
 use rgpu_protocol::wire;
 use rgpu_transport::auth::compute_challenge_response;
 
@@ -63,6 +63,7 @@ pub fn probe_server_tcp(port: u16, token: &str) -> Result<ServerProbeResult, Str
         protocol_version: PROTOCOL_VERSION,
         name: "RGPU UI".to_string(),
         challenge: None,
+        protocol_hash: Some(PROTOCOL_HASH),
     };
     send_message(&mut stream, &hello)?;
 

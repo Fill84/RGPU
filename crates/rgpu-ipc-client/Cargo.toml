@@ -1,0 +1,9 @@
+[package]
+name = "rgpu-ipc-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rgpu-protocol = { workspace = true }
+rgpu-common = { path = "../rgpu-common" }
+parking_lot = { workspace = true }

@@ -10,7 +10,7 @@ use rgpu_core::config::{ClientConfig, ServerEndpoint, TransportMode};
 use rgpu_protocol::cuda_commands::{CudaCommand, CudaResponse};
 use rgpu_protocol::gpu_info::GpuInfo;
 use rgpu_protocol::handle::NetworkHandle;
-use rgpu_protocol::messages::{Message, RequestId, PROTOCOL_VERSION};
+use rgpu_protocol::messages::{Message, RequestId, PROTOCOL_HASH, PROTOCOL_VERSION};
 use rgpu_protocol::nvdec_commands::{NvdecCommand, NvdecResponse};
 use rgpu_protocol::nvenc_commands::{NvencCommand, NvencResponse};
 use rgpu_protocol::vulkan_commands::{VulkanCommand, VulkanResponse};
@@ -67,9 +67,9 @@ pub struct ClientDaemon {
     /// Server endpoints for reconnection
     endpoints: Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     /// Local CUDA executor for include_local_gpus (executes CUDA commands on the client's own GPU)
-    local_cuda_executor: Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
+    local_cuda_executor: Option<Arc<rgpu_server::cuda::CudaExecutor>>,
     /// Local Vulkan executor for include_local_gpus (executes Vulkan commands on the client's own GPU)
-    local_vulkan_executor: Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_vulkan_executor: Option<Arc<rgpu_server::vulkan::VulkanExecutor>>,
     /// Local NVENC executor for include_local_gpus
     local_nvenc_executor: Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
     /// Local NVDEC executor for include_local_gpus
@@ -87,8 +87,8 @@ impl ClientDaemon {
             let local_gpus = rgpu_server::gpu_discovery::discover_gpus(LOCAL_SERVER_ID);
             if !local_gpus.is_empty() {
                 info!("discovered {} local GPU(s) for direct execution", local_gpus.len());
-                let cuda = Arc::new(rgpu_server::cuda_executor::CudaExecutor::new(local_gpus));
-                let vulkan = Arc::new(rgpu_server::vulkan_executor::VulkanExecutor::new());
+                let cuda = Arc::new(rgpu_server::cuda::CudaExecutor::new(local_gpus));
+                let vulkan = Arc::new(rgpu_server::vulkan::VulkanExecutor::new());
                 let nvenc = Arc::new(rgpu_server::nvenc_executor::NvencExecutor::new(cuda.clone()));
                 let nvdec = Arc::new(rgpu_server::nvdec_executor::NvdecExecutor::new());
                 let session = Arc::new(rgpu_server::session::Session::new(
@@ -316,6 +316,7 @@ impl ClientDaemon {
             protocol_version: PROTOCOL_VERSION,
             name: "RGPU Client".to_string(),
             challenge: None,
+            protocol_hash: Some(PROTOCOL_HASH),
         };
         let frame = wire::encode_message(&hello, 0)?;
         writer.write_all(&frame).await?;
@@ -355,6 +356,7 @@ impl ClientDaemon {
             protocol_version: PROTOCOL_VERSION,
             name: "RGPU Client".to_string(),
             challenge: None,
+            protocol_hash: Some(PROTOCOL_HASH),
         };
         let server_hello = quic_conn.send_and_receive(&hello).await?;
 
@@ -456,6 +458,7 @@ async fn reconnect_tcp(
         protocol_version: PROTOCOL_VERSION,
         name: "RGPU Client".to_string(),
         challenge: None,
+        protocol_hash: Some(PROTOCOL_HASH),
     };
     let frame = wire::encode_message(&hello, 0)?;
     writer.write_all(&frame).await?;
@@ -514,6 +517,7 @@ async fn reconnect_quic(
         protocol_version: PROTOCOL_VERSION,
         name: "RGPU Client".to_string(),
         challenge: None,
+        protocol_hash: Some(PROTOCOL_HASH),
     };
     let server_hello = quic_conn.send_and_receive(&hello).await?;
     let challenge = match &server_hello {
@@ -901,8 +905,8 @@ fn handle_ipc_message(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
-    local_cuda_executor: &Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
-    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_cuda_executor: &Option<Arc<rgpu_server::cuda::CudaExecutor>>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan::VulkanExecutor>>,
     local_nvenc_executor: &Option<Arc<rgpu_server::nvenc_executor::NvencExecutor>>,
     local_nvdec_executor: &Option<Arc<rgpu_server::nvdec_executor::NvdecExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
@@ -1118,7 +1122,7 @@ async fn forward_cuda_command_pooled(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
-    local_cuda_executor: &Option<Arc<rgpu_server::cuda_executor::CudaExecutor>>,
+    local_cuda_executor: &Option<Arc<rgpu_server::cuda::CudaExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: CudaCommand,
@@ -1210,7 +1214,7 @@ async fn forward_vulkan_command_pooled(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
-    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan::VulkanExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: VulkanCommand,
@@ -1265,7 +1269,7 @@ async fn broadcast_vulkan_create_instance(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
-    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan::VulkanExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     command: &VulkanCommand,
@@ -1336,7 +1340,7 @@ async fn broadcast_vulkan_enumerate_physical_devices(
     server_conns: &Arc<tokio::sync::RwLock<Vec<Arc<Mutex<Option<ServerConn>>>>>>,
     endpoints: &Arc<tokio::sync::RwLock<Vec<ServerEndpoint>>>,
     pool_manager: &Arc<GpuPoolManager>,
-    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan_executor::VulkanExecutor>>,
+    local_vulkan_executor: &Option<Arc<rgpu_server::vulkan::VulkanExecutor>>,
     local_session: &Option<Arc<rgpu_server::session::Session>>,
     request_id: RequestId,
     instance: NetworkHandle,

@@ -15,8 +15,8 @@ use rgpu_protocol::vulkan_commands::{
 
 // ── Shader Module ───────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateShaderModule(
+#[allow(non_snake_case)]
+unsafe fn vkCreateShaderModule_impl(
     device: vk::Device,
     p_create_info: *const vk::ShaderModuleCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -58,7 +58,17 @@ pub unsafe extern "C" fn vkCreateShaderModule(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyShaderModule(
+pub unsafe extern "C" fn vkCreateShaderModule(
+    device: vk::Device,
+    p_create_info: *const vk::ShaderModuleCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_shader_module: *mut vk::ShaderModule,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateShaderModule_impl(device, p_create_info, _p_allocator, p_shader_module))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyShaderModule_impl(
     device: vk::Device,
     shader_module: vk::ShaderModule,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -84,10 +94,19 @@ pub unsafe extern "C" fn vkDestroyShaderModule(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyShaderModule(
+    device: vk::Device,
+    shader_module: vk::ShaderModule,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyShaderModule_impl(device, shader_module, _p_allocator))
+}
+
 // ── Descriptor Set Layout ───────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateDescriptorSetLayout(
+#[allow(non_snake_case)]
+unsafe fn vkCreateDescriptorSetLayout_impl(
     device: vk::Device,
     p_create_info: *const vk::DescriptorSetLayoutCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -136,7 +155,17 @@ pub unsafe extern "C" fn vkCreateDescriptorSetLayout(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyDescriptorSetLayout(
+pub unsafe extern "C" fn vkCreateDescriptorSetLayout(
+    device: vk::Device,
+    p_create_info: *const vk::DescriptorSetLayoutCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_set_layout: *mut vk::DescriptorSetLayout,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateDescriptorSetLayout_impl(device, p_create_info, _p_allocator, p_set_layout))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyDescriptorSetLayout_impl(
     device: vk::Device,
     descriptor_set_layout: vk::DescriptorSetLayout,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -162,10 +191,19 @@ pub unsafe extern "C" fn vkDestroyDescriptorSetLayout(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyDescriptorSetLayout(
+    device: vk::Device,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyDescriptorSetLayout_impl(device, descriptor_set_layout, _p_allocator))
+}
+
 // ── Pipeline Layout ─────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreatePipelineLayout(
+#[allow(non_snake_case)]
+unsafe fn vkCreatePipelineLayout_impl(
     device: vk::Device,
     p_create_info: *const vk::PipelineLayoutCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -229,7 +267,17 @@ pub unsafe extern "C" fn vkCreatePipelineLayout(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyPipelineLayout(
+pub unsafe extern "C" fn vkCreatePipelineLayout(
+    device: vk::Device,
+    p_create_info: *const vk::PipelineLayoutCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_pipeline_layout: *mut vk::PipelineLayout,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreatePipelineLayout_impl(device, p_create_info, _p_allocator, p_pipeline_layout))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyPipelineLayout_impl(
     device: vk::Device,
     pipeline_layout: vk::PipelineLayout,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -255,10 +303,19 @@ pub unsafe extern "C" fn vkDestroyPipelineLayout(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyPipelineLayout(
+    device: vk::Device,
+    pipeline_layout: vk::PipelineLayout,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyPipelineLayout_impl(device, pipeline_layout, _p_allocator))
+}
+
 // ── Compute Pipelines ───────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateComputePipelines(
+#[allow(non_snake_case)]
+unsafe fn vkCreateComputePipelines_impl(
     device: vk::Device,
     _pipeline_cache: vk::PipelineCache,
     create_info_count: u32,
@@ -335,7 +392,19 @@ pub unsafe extern "C" fn vkCreateComputePipelines(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vkDestroyPipeline(
+pub unsafe extern "C" fn vkCreateComputePipelines(
+    device: vk::Device,
+    _pipeline_cache: vk::PipelineCache,
+    create_info_count: u32,
+    p_create_infos: *const vk::ComputePipelineCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_pipelines: *mut vk::Pipeline,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateComputePipelines_impl(device, _pipeline_cache, create_info_count, p_create_infos, _p_allocator, p_pipelines))
+}
+
+#[allow(non_snake_case)]
+unsafe fn vkDestroyPipeline_impl(
     device: vk::Device,
     pipeline: vk::Pipeline,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -359,4 +428,13 @@ pub unsafe extern "C" fn vkDestroyPipeline(
             pipeline: handle,
         });
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyPipeline(
+    device: vk::Device,
+    pipeline: vk::Pipeline,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyPipeline_impl(device, pipeline, _p_allocator))
 }

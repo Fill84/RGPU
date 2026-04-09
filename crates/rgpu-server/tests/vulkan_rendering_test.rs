@@ -8,7 +8,7 @@
 
 use rgpu_protocol::vulkan_commands::*;
 use rgpu_server::session::Session;
-use rgpu_server::vulkan_executor::VulkanExecutor;
+use rgpu_server::vulkan::VulkanExecutor;
 
 fn make_session() -> Session {
     Session::new(1, 0, "render_test".to_string())

@@ -3,7 +3,7 @@ use std::time::Duration;
 use rgpu_common::platform::default_ipc_path;
 use rgpu_core::config::RgpuConfig;
 use rgpu_protocol::gpu_info::GpuInfo;
-use rgpu_protocol::messages::{Message, PROTOCOL_VERSION};
+use rgpu_protocol::messages::{Message, PROTOCOL_HASH, PROTOCOL_VERSION};
 use rgpu_protocol::wire;
 
 /// Local GPU marker (u16::MAX) — matches rgpu_client::pool_manager::LOCAL_SERVER_ID.
@@ -360,6 +360,7 @@ async fn check_server_tcp(addr: &str, token: &str) -> anyhow::Result<(usize, u16
         protocol_version: PROTOCOL_VERSION,
         name: "RGPU Verify".to_string(),
         challenge: None,
+        protocol_hash: Some(PROTOCOL_HASH),
     };
     let frame = wire::encode_message(&hello, 0)?;
     writer.write_all(&frame).await?;

@@ -65,9 +65,14 @@ pub fn build_client_tls(
     Ok(TlsConnector::from(Arc::new(config)))
 }
 
-/// Build a TLS connector that accepts any certificate (for development only).
+/// Build a TLS connector that accepts any certificate.
+///
+/// **WARNING**: This disables all certificate verification and is only available
+/// in debug builds. Using this in production exposes connections to MITM attacks.
+#[cfg(debug_assertions)]
 pub fn build_insecure_client_tls() -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>>
 {
+    tracing::warn!("using insecure TLS - certificate verification disabled (development only)");
     let config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(InsecureVerifier))
@@ -76,10 +81,19 @@ pub fn build_insecure_client_tls() -> Result<TlsConnector, Box<dyn std::error::E
     Ok(TlsConnector::from(Arc::new(config)))
 }
 
+/// Stub for release builds — insecure TLS is not available.
+#[cfg(not(debug_assertions))]
+pub fn build_insecure_client_tls() -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>>
+{
+    Err("insecure TLS is not available in release builds".into())
+}
+
 /// Certificate verifier that accepts everything (DEVELOPMENT ONLY).
+#[cfg(debug_assertions)]
 #[derive(Debug)]
 struct InsecureVerifier;
 
+#[cfg(debug_assertions)]
 impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
     fn verify_server_cert(
         &self,

@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 use rgpu_protocol::handle::{NetworkHandle, ResourceType};
 use rgpu_protocol::nvenc_commands::{NvGuid, NvencCommand, NvencResponse};
 
-use crate::cuda_executor::CudaExecutor;
+use crate::cuda::CudaExecutor;
 use crate::nvenc_driver::{self, NvencDriver, NV_ENC_SUCCESS};
 use crate::session::Session;
 
@@ -154,6 +154,8 @@ impl NvencExecutor {
     }
 
     /// Resolve a mapped resource NetworkHandle to a real resource pointer.
+    /// Currently unused but needed for future mapped resource operations.
+    #[allow(dead_code)]
     fn resolve_mapped_resource(
         &self,
         handle: &NetworkHandle,

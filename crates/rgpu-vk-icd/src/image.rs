@@ -14,8 +14,8 @@ use rgpu_protocol::vulkan_commands::{
 
 // ── vkCreateImage ────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateImage(
+#[allow(non_snake_case)]
+unsafe fn vkCreateImage_impl(
     device: vk::Device,
     p_create_info: *const vk::ImageCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -72,10 +72,20 @@ pub unsafe extern "C" fn vkCreateImage(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkCreateImage(
+    device: vk::Device,
+    p_create_info: *const vk::ImageCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_image: *mut vk::Image,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateImage_impl(device, p_create_info, _p_allocator, p_image))
+}
+
 // ── vkDestroyImage ───────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkDestroyImage(
+#[allow(non_snake_case)]
+unsafe fn vkDestroyImage_impl(
     device: vk::Device,
     image: vk::Image,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -101,10 +111,19 @@ pub unsafe extern "C" fn vkDestroyImage(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyImage(
+    device: vk::Device,
+    image: vk::Image,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyImage_impl(device, image, _p_allocator))
+}
+
 // ── vkGetImageMemoryRequirements ─────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkGetImageMemoryRequirements(
+#[allow(non_snake_case)]
+unsafe fn vkGetImageMemoryRequirements_impl(
     device: vk::Device,
     image: vk::Image,
     p_memory_requirements: *mut vk::MemoryRequirements,
@@ -144,10 +163,19 @@ pub unsafe extern "C" fn vkGetImageMemoryRequirements(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkGetImageMemoryRequirements(
+    device: vk::Device,
+    image: vk::Image,
+    p_memory_requirements: *mut vk::MemoryRequirements,
+) {
+    rgpu_common::ffi::catch_panic((), || vkGetImageMemoryRequirements_impl(device, image, p_memory_requirements))
+}
+
 // ── vkBindImageMemory ────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkBindImageMemory(
+#[allow(non_snake_case)]
+unsafe fn vkBindImageMemory_impl(
     device: vk::Device,
     image: vk::Image,
     memory: vk::DeviceMemory,
@@ -185,10 +213,20 @@ pub unsafe extern "C" fn vkBindImageMemory(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkBindImageMemory(
+    device: vk::Device,
+    image: vk::Image,
+    memory: vk::DeviceMemory,
+    memory_offset: vk::DeviceSize,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkBindImageMemory_impl(device, image, memory, memory_offset))
+}
+
 // ── vkCreateImageView ────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkCreateImageView(
+#[allow(non_snake_case)]
+unsafe fn vkCreateImageView_impl(
     device: vk::Device,
     p_create_info: *const vk::ImageViewCreateInfo<'_>,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -243,10 +281,20 @@ pub unsafe extern "C" fn vkCreateImageView(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vkCreateImageView(
+    device: vk::Device,
+    p_create_info: *const vk::ImageViewCreateInfo<'_>,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+    p_view: *mut vk::ImageView,
+) -> vk::Result {
+    rgpu_common::ffi::catch_panic(ash::vk::Result::ERROR_DEVICE_LOST, || vkCreateImageView_impl(device, p_create_info, _p_allocator, p_view))
+}
+
 // ── vkDestroyImageView ───────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn vkDestroyImageView(
+#[allow(non_snake_case)]
+unsafe fn vkDestroyImageView_impl(
     device: vk::Device,
     image_view: vk::ImageView,
     _p_allocator: *const vk::AllocationCallbacks<'_>,
@@ -270,4 +318,13 @@ pub unsafe extern "C" fn vkDestroyImageView(
             image_view: handle,
         });
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vkDestroyImageView(
+    device: vk::Device,
+    image_view: vk::ImageView,
+    _p_allocator: *const vk::AllocationCallbacks<'_>,
+) {
+    rgpu_common::ffi::catch_panic((), || vkDestroyImageView_impl(device, image_view, _p_allocator))
 }

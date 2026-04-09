@@ -42,185 +42,185 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
 
     let func_ptr: Option<*mut c_void> = match name {
         // ── Initialization ──────────────────────────────────────
-        "cuInit" => Some(crate::cuInit as *mut c_void),
-        "cuDriverGetVersion" => Some(crate::cuDriverGetVersion as *mut c_void),
+        "cuInit" => Some(crate::device::cuInit as *mut c_void),
+        "cuDriverGetVersion" => Some(crate::device::cuDriverGetVersion as *mut c_void),
 
         // ── Error Handling ──────────────────────────────────────
         "cuGetErrorString" => Some(cuGetErrorString as *mut c_void),
         "cuGetErrorName" => Some(cuGetErrorName as *mut c_void),
 
         // ── Device Management ───────────────────────────────────
-        "cuDeviceGetCount" => Some(crate::cuDeviceGetCount as *mut c_void),
-        "cuDeviceGet" => Some(crate::cuDeviceGet as *mut c_void),
-        "cuDeviceGetName" => Some(crate::cuDeviceGetName as *mut c_void),
-        "cuDeviceGetAttribute" => Some(crate::cuDeviceGetAttribute as *mut c_void),
+        "cuDeviceGetCount" => Some(crate::device::cuDeviceGetCount as *mut c_void),
+        "cuDeviceGet" => Some(crate::device::cuDeviceGet as *mut c_void),
+        "cuDeviceGetName" => Some(crate::device::cuDeviceGetName as *mut c_void),
+        "cuDeviceGetAttribute" => Some(crate::device::cuDeviceGetAttribute as *mut c_void),
         "cuDeviceTotalMem" | "cuDeviceTotalMem_v2" => {
-            Some(crate::cuDeviceTotalMem_v2 as *mut c_void)
+            Some(crate::device::cuDeviceTotalMem_v2 as *mut c_void)
         }
-        "cuDeviceComputeCapability" => Some(crate::cuDeviceComputeCapability as *mut c_void),
-        "cuDeviceGetUuid" | "cuDeviceGetUuid_v2" => Some(crate::cuDeviceGetUuid as *mut c_void),
-        "cuDeviceGetP2PAttribute" => Some(crate::cuDeviceGetP2PAttribute as *mut c_void),
-        "cuDeviceCanAccessPeer" => Some(crate::cuDeviceCanAccessPeer as *mut c_void),
-        "cuDeviceGetByPCIBusId" => Some(crate::cuDeviceGetByPCIBusId as *mut c_void),
-        "cuDeviceGetPCIBusId" => Some(crate::cuDeviceGetPCIBusId as *mut c_void),
-        "cuDeviceGetDefaultMemPool" => Some(crate::cuDeviceGetDefaultMemPool as *mut c_void),
-        "cuDeviceGetMemPool" => Some(crate::cuDeviceGetMemPool as *mut c_void),
-        "cuDeviceSetMemPool" => Some(crate::cuDeviceSetMemPool as *mut c_void),
+        "cuDeviceComputeCapability" => Some(crate::device::cuDeviceComputeCapability as *mut c_void),
+        "cuDeviceGetUuid" | "cuDeviceGetUuid_v2" => Some(crate::device::cuDeviceGetUuid as *mut c_void),
+        "cuDeviceGetP2PAttribute" => Some(crate::device::cuDeviceGetP2PAttribute as *mut c_void),
+        "cuDeviceCanAccessPeer" => Some(crate::device::cuDeviceCanAccessPeer as *mut c_void),
+        "cuDeviceGetByPCIBusId" => Some(crate::device::cuDeviceGetByPCIBusId as *mut c_void),
+        "cuDeviceGetPCIBusId" => Some(crate::device::cuDeviceGetPCIBusId as *mut c_void),
+        "cuDeviceGetDefaultMemPool" => Some(crate::device::cuDeviceGetDefaultMemPool as *mut c_void),
+        "cuDeviceGetMemPool" => Some(crate::device::cuDeviceGetMemPool as *mut c_void),
+        "cuDeviceSetMemPool" => Some(crate::device::cuDeviceSetMemPool as *mut c_void),
 
         // ── Primary Context ─────────────────────────────────────
-        "cuDevicePrimaryCtxRetain" => Some(crate::cuDevicePrimaryCtxRetain as *mut c_void),
+        "cuDevicePrimaryCtxRetain" => Some(crate::context::cuDevicePrimaryCtxRetain as *mut c_void),
         "cuDevicePrimaryCtxRelease" | "cuDevicePrimaryCtxRelease_v2" => {
-            Some(crate::cuDevicePrimaryCtxRelease_v2 as *mut c_void)
+            Some(crate::context::cuDevicePrimaryCtxRelease_v2 as *mut c_void)
         }
         "cuDevicePrimaryCtxReset" | "cuDevicePrimaryCtxReset_v2" => {
-            Some(crate::cuDevicePrimaryCtxReset_v2 as *mut c_void)
+            Some(crate::context::cuDevicePrimaryCtxReset_v2 as *mut c_void)
         }
-        "cuDevicePrimaryCtxGetState" => Some(crate::cuDevicePrimaryCtxGetState as *mut c_void),
+        "cuDevicePrimaryCtxGetState" => Some(crate::context::cuDevicePrimaryCtxGetState as *mut c_void),
         "cuDevicePrimaryCtxSetFlags" | "cuDevicePrimaryCtxSetFlags_v2" => {
-            Some(crate::cuDevicePrimaryCtxSetFlags_v2 as *mut c_void)
+            Some(crate::context::cuDevicePrimaryCtxSetFlags_v2 as *mut c_void)
         }
 
         // ── Context Management ──────────────────────────────────
-        "cuCtxCreate" | "cuCtxCreate_v2" => Some(crate::cuCtxCreate_v2 as *mut c_void),
-        "cuCtxDestroy" | "cuCtxDestroy_v2" => Some(crate::cuCtxDestroy_v2 as *mut c_void),
-        "cuCtxSetCurrent" => Some(crate::cuCtxSetCurrent as *mut c_void),
-        "cuCtxGetCurrent" => Some(crate::cuCtxGetCurrent as *mut c_void),
-        "cuCtxSynchronize" => Some(crate::cuCtxSynchronize as *mut c_void),
+        "cuCtxCreate" | "cuCtxCreate_v2" => Some(crate::context::cuCtxCreate_v2 as *mut c_void),
+        "cuCtxDestroy" | "cuCtxDestroy_v2" => Some(crate::context::cuCtxDestroy_v2 as *mut c_void),
+        "cuCtxSetCurrent" => Some(crate::context::cuCtxSetCurrent as *mut c_void),
+        "cuCtxGetCurrent" => Some(crate::context::cuCtxGetCurrent as *mut c_void),
+        "cuCtxSynchronize" => Some(crate::context::cuCtxSynchronize as *mut c_void),
         "cuCtxPushCurrent" | "cuCtxPushCurrent_v2" => {
-            Some(crate::cuCtxPushCurrent_v2 as *mut c_void)
+            Some(crate::context::cuCtxPushCurrent_v2 as *mut c_void)
         }
         "cuCtxPopCurrent" | "cuCtxPopCurrent_v2" => {
-            Some(crate::cuCtxPopCurrent_v2 as *mut c_void)
+            Some(crate::context::cuCtxPopCurrent_v2 as *mut c_void)
         }
-        "cuCtxGetDevice" => Some(crate::cuCtxGetDevice as *mut c_void),
-        "cuCtxSetCacheConfig" => Some(crate::cuCtxSetCacheConfig as *mut c_void),
-        "cuCtxGetCacheConfig" => Some(crate::cuCtxGetCacheConfig as *mut c_void),
-        "cuCtxSetLimit" => Some(crate::cuCtxSetLimit as *mut c_void),
-        "cuCtxGetLimit" => Some(crate::cuCtxGetLimit as *mut c_void),
-        "cuCtxGetStreamPriorityRange" => Some(crate::cuCtxGetStreamPriorityRange as *mut c_void),
-        "cuCtxGetApiVersion" => Some(crate::cuCtxGetApiVersion as *mut c_void),
-        "cuCtxGetFlags" => Some(crate::cuCtxGetFlags as *mut c_void),
-        "cuCtxSetFlags" => Some(crate::cuCtxSetFlags as *mut c_void),
-        "cuCtxResetPersistingL2Cache" => Some(crate::cuCtxResetPersistingL2Cache as *mut c_void),
+        "cuCtxGetDevice" => Some(crate::context::cuCtxGetDevice as *mut c_void),
+        "cuCtxSetCacheConfig" => Some(crate::context::cuCtxSetCacheConfig as *mut c_void),
+        "cuCtxGetCacheConfig" => Some(crate::context::cuCtxGetCacheConfig as *mut c_void),
+        "cuCtxSetLimit" => Some(crate::context::cuCtxSetLimit as *mut c_void),
+        "cuCtxGetLimit" => Some(crate::context::cuCtxGetLimit as *mut c_void),
+        "cuCtxGetStreamPriorityRange" => Some(crate::context::cuCtxGetStreamPriorityRange as *mut c_void),
+        "cuCtxGetApiVersion" => Some(crate::context::cuCtxGetApiVersion as *mut c_void),
+        "cuCtxGetFlags" => Some(crate::context::cuCtxGetFlags as *mut c_void),
+        "cuCtxSetFlags" => Some(crate::context::cuCtxSetFlags as *mut c_void),
+        "cuCtxResetPersistingL2Cache" => Some(crate::context::cuCtxResetPersistingL2Cache as *mut c_void),
 
         // ── Peer Access ─────────────────────────────────────────
-        "cuCtxEnablePeerAccess" => Some(crate::cuCtxEnablePeerAccess as *mut c_void),
-        "cuCtxDisablePeerAccess" => Some(crate::cuCtxDisablePeerAccess as *mut c_void),
+        "cuCtxEnablePeerAccess" => Some(crate::context::cuCtxEnablePeerAccess as *mut c_void),
+        "cuCtxDisablePeerAccess" => Some(crate::context::cuCtxDisablePeerAccess as *mut c_void),
 
         // ── Module Management ───────────────────────────────────
-        "cuModuleLoadData" => Some(crate::cuModuleLoadData as *mut c_void),
-        "cuModuleUnload" => Some(crate::cuModuleUnload as *mut c_void),
-        "cuModuleGetFunction" => Some(crate::cuModuleGetFunction as *mut c_void),
-        "cuModuleLoad" => Some(crate::cuModuleLoad as *mut c_void),
-        "cuModuleLoadDataEx" => Some(crate::cuModuleLoadDataEx as *mut c_void),
-        "cuModuleLoadFatBinary" => Some(crate::cuModuleLoadFatBinary as *mut c_void),
+        "cuModuleLoadData" => Some(crate::module::cuModuleLoadData as *mut c_void),
+        "cuModuleUnload" => Some(crate::module::cuModuleUnload as *mut c_void),
+        "cuModuleGetFunction" => Some(crate::module::cuModuleGetFunction as *mut c_void),
+        "cuModuleLoad" => Some(crate::module::cuModuleLoad as *mut c_void),
+        "cuModuleLoadDataEx" => Some(crate::module::cuModuleLoadDataEx as *mut c_void),
+        "cuModuleLoadFatBinary" => Some(crate::module::cuModuleLoadFatBinary as *mut c_void),
         "cuModuleGetGlobal" | "cuModuleGetGlobal_v2" => {
-            Some(crate::cuModuleGetGlobal_v2 as *mut c_void)
+            Some(crate::module::cuModuleGetGlobal_v2 as *mut c_void)
         }
 
         // ── Linker ──────────────────────────────────────────────
-        "cuLinkCreate" | "cuLinkCreate_v2" => Some(crate::cuLinkCreate_v2 as *mut c_void),
-        "cuLinkAddData" | "cuLinkAddData_v2" => Some(crate::cuLinkAddData_v2 as *mut c_void),
-        "cuLinkAddFile" | "cuLinkAddFile_v2" => Some(crate::cuLinkAddFile_v2 as *mut c_void),
-        "cuLinkComplete" => Some(crate::cuLinkComplete as *mut c_void),
-        "cuLinkDestroy" => Some(crate::cuLinkDestroy as *mut c_void),
+        "cuLinkCreate" | "cuLinkCreate_v2" => Some(crate::module::cuLinkCreate_v2 as *mut c_void),
+        "cuLinkAddData" | "cuLinkAddData_v2" => Some(crate::module::cuLinkAddData_v2 as *mut c_void),
+        "cuLinkAddFile" | "cuLinkAddFile_v2" => Some(crate::module::cuLinkAddFile_v2 as *mut c_void),
+        "cuLinkComplete" => Some(crate::module::cuLinkComplete as *mut c_void),
+        "cuLinkDestroy" => Some(crate::module::cuLinkDestroy as *mut c_void),
 
         // ── Memory Management ───────────────────────────────────
-        "cuMemAlloc" | "cuMemAlloc_v2" => Some(crate::cuMemAlloc_v2 as *mut c_void),
-        "cuMemFree" | "cuMemFree_v2" => Some(crate::cuMemFree_v2 as *mut c_void),
-        "cuMemcpy" => Some(crate::cuMemcpy as *mut c_void),
-        "cuMemcpyAsync" | "cuMemcpyAsync_ptsz" => Some(crate::cuMemcpyAsync as *mut c_void),
-        "cuMemcpyHtoD" | "cuMemcpyHtoD_v2" => Some(crate::cuMemcpyHtoD_v2 as *mut c_void),
-        "cuMemcpyDtoH" | "cuMemcpyDtoH_v2" => Some(crate::cuMemcpyDtoH_v2 as *mut c_void),
-        "cuMemcpyDtoD" | "cuMemcpyDtoD_v2" => Some(crate::cuMemcpyDtoD_v2 as *mut c_void),
+        "cuMemAlloc" | "cuMemAlloc_v2" => Some(crate::memory::cuMemAlloc_v2 as *mut c_void),
+        "cuMemFree" | "cuMemFree_v2" => Some(crate::memory::cuMemFree_v2 as *mut c_void),
+        "cuMemcpy" => Some(crate::memory::cuMemcpy as *mut c_void),
+        "cuMemcpyAsync" | "cuMemcpyAsync_ptsz" => Some(crate::memory::cuMemcpyAsync as *mut c_void),
+        "cuMemcpyHtoD" | "cuMemcpyHtoD_v2" => Some(crate::memory::cuMemcpyHtoD_v2 as *mut c_void),
+        "cuMemcpyDtoH" | "cuMemcpyDtoH_v2" => Some(crate::memory::cuMemcpyDtoH_v2 as *mut c_void),
+        "cuMemcpyDtoD" | "cuMemcpyDtoD_v2" => Some(crate::memory::cuMemcpyDtoD_v2 as *mut c_void),
         "cuMemcpyHtoDAsync" | "cuMemcpyHtoDAsync_v2" => {
-            Some(crate::cuMemcpyHtoDAsync_v2 as *mut c_void)
+            Some(crate::memory::cuMemcpyHtoDAsync_v2 as *mut c_void)
         }
         "cuMemcpyDtoHAsync" | "cuMemcpyDtoHAsync_v2" => {
-            Some(crate::cuMemcpyDtoHAsync_v2 as *mut c_void)
+            Some(crate::memory::cuMemcpyDtoHAsync_v2 as *mut c_void)
         }
         "cuMemcpyDtoDAsync" | "cuMemcpyDtoDAsync_v2" => {
-            Some(crate::cuMemcpyDtoDAsync_v2 as *mut c_void)
+            Some(crate::memory::cuMemcpyDtoDAsync_v2 as *mut c_void)
         }
-        "cuMemcpy2D" | "cuMemcpy2D_v2" => Some(crate::cuMemcpy2D_v2 as *mut c_void),
+        "cuMemcpy2D" | "cuMemcpy2D_v2" => Some(crate::memory::cuMemcpy2D_v2 as *mut c_void),
         "cuMemcpy2DAsync" | "cuMemcpy2DAsync_v2" | "cuMemcpy2DAsync_v2_ptsz" => {
-            Some(crate::cuMemcpy2DAsync_v2 as *mut c_void)
+            Some(crate::memory::cuMemcpy2DAsync_v2 as *mut c_void)
         }
-        "cuMemsetD8" | "cuMemsetD8_v2" => Some(crate::cuMemsetD8_v2 as *mut c_void),
-        "cuMemsetD16" | "cuMemsetD16_v2" => Some(crate::cuMemsetD16_v2 as *mut c_void),
-        "cuMemsetD32" | "cuMemsetD32_v2" => Some(crate::cuMemsetD32_v2 as *mut c_void),
-        "cuMemsetD8Async" | "cuMemsetD8Async_ptsz" => Some(crate::cuMemsetD8Async as *mut c_void),
-        "cuMemsetD16Async" | "cuMemsetD16Async_ptsz" => Some(crate::cuMemsetD16Async as *mut c_void),
-        "cuMemsetD32Async" | "cuMemsetD32Async_ptsz" => Some(crate::cuMemsetD32Async as *mut c_void),
-        "cuMemGetInfo" | "cuMemGetInfo_v2" => Some(crate::cuMemGetInfo_v2 as *mut c_void),
+        "cuMemsetD8" | "cuMemsetD8_v2" => Some(crate::memory::cuMemsetD8_v2 as *mut c_void),
+        "cuMemsetD16" | "cuMemsetD16_v2" => Some(crate::memory::cuMemsetD16_v2 as *mut c_void),
+        "cuMemsetD32" | "cuMemsetD32_v2" => Some(crate::memory::cuMemsetD32_v2 as *mut c_void),
+        "cuMemsetD8Async" | "cuMemsetD8Async_ptsz" => Some(crate::memory::cuMemsetD8Async as *mut c_void),
+        "cuMemsetD16Async" | "cuMemsetD16Async_ptsz" => Some(crate::memory::cuMemsetD16Async as *mut c_void),
+        "cuMemsetD32Async" | "cuMemsetD32Async_ptsz" => Some(crate::memory::cuMemsetD32Async as *mut c_void),
+        "cuMemGetInfo" | "cuMemGetInfo_v2" => Some(crate::memory::cuMemGetInfo_v2 as *mut c_void),
         "cuMemGetAddressRange" | "cuMemGetAddressRange_v2" => {
-            Some(crate::cuMemGetAddressRange_v2 as *mut c_void)
+            Some(crate::memory::cuMemGetAddressRange_v2 as *mut c_void)
         }
-        "cuMemAllocHost" | "cuMemAllocHost_v2" => Some(crate::cuMemAllocHost_v2 as *mut c_void),
-        "cuMemFreeHost" => Some(crate::cuMemFreeHost as *mut c_void),
-        "cuMemHostAlloc" => Some(crate::cuMemHostAlloc as *mut c_void),
+        "cuMemAllocHost" | "cuMemAllocHost_v2" => Some(crate::memory::cuMemAllocHost_v2 as *mut c_void),
+        "cuMemFreeHost" => Some(crate::memory::cuMemFreeHost as *mut c_void),
+        "cuMemHostAlloc" => Some(crate::memory::cuMemHostAlloc as *mut c_void),
         "cuMemHostGetDevicePointer" | "cuMemHostGetDevicePointer_v2" => {
-            Some(crate::cuMemHostGetDevicePointer_v2 as *mut c_void)
+            Some(crate::memory::cuMemHostGetDevicePointer_v2 as *mut c_void)
         }
-        "cuMemHostGetFlags" => Some(crate::cuMemHostGetFlags as *mut c_void),
-        "cuMemAllocManaged" => Some(crate::cuMemAllocManaged as *mut c_void),
+        "cuMemHostGetFlags" => Some(crate::memory::cuMemHostGetFlags as *mut c_void),
+        "cuMemAllocManaged" => Some(crate::memory::cuMemAllocManaged as *mut c_void),
         "cuMemAllocPitch" | "cuMemAllocPitch_v2" => {
-            Some(crate::cuMemAllocPitch_v2 as *mut c_void)
+            Some(crate::memory::cuMemAllocPitch_v2 as *mut c_void)
         }
 
         // ── Memory Pools ────────────────────────────────────────
-        "cuMemPoolDestroy" => Some(crate::cuMemPoolDestroy as *mut c_void),
-        "cuMemPoolTrimTo" => Some(crate::cuMemPoolTrimTo as *mut c_void),
-        "cuMemAllocAsync" | "cuMemAllocAsync_ptsz" => Some(crate::cuMemAllocAsync as *mut c_void),
-        "cuMemFreeAsync" | "cuMemFreeAsync_ptsz" => Some(crate::cuMemFreeAsync as *mut c_void),
+        "cuMemPoolDestroy" => Some(crate::memory::cuMemPoolDestroy as *mut c_void),
+        "cuMemPoolTrimTo" => Some(crate::memory::cuMemPoolTrimTo as *mut c_void),
+        "cuMemAllocAsync" | "cuMemAllocAsync_ptsz" => Some(crate::memory::cuMemAllocAsync as *mut c_void),
+        "cuMemFreeAsync" | "cuMemFreeAsync_ptsz" => Some(crate::memory::cuMemFreeAsync as *mut c_void),
         "cuMemAllocFromPoolAsync" | "cuMemAllocFromPoolAsync_ptsz" => {
-            Some(crate::cuMemAllocFromPoolAsync as *mut c_void)
+            Some(crate::memory::cuMemAllocFromPoolAsync as *mut c_void)
         }
 
         // ── Execution Control ───────────────────────────────────
-        "cuLaunchKernel" => Some(crate::cuLaunchKernel as *mut c_void),
-        "cuLaunchCooperativeKernel" => Some(crate::cuLaunchCooperativeKernel as *mut c_void),
-        "cuFuncGetAttribute" => Some(crate::cuFuncGetAttribute as *mut c_void),
-        "cuFuncSetAttribute" => Some(crate::cuFuncSetAttribute as *mut c_void),
-        "cuFuncSetCacheConfig" => Some(crate::cuFuncSetCacheConfig as *mut c_void),
-        "cuFuncSetSharedMemConfig" => Some(crate::cuFuncSetSharedMemConfig as *mut c_void),
-        "cuFuncGetModule" => Some(crate::cuFuncGetModule as *mut c_void),
-        "cuFuncGetName" => Some(crate::cuFuncGetName as *mut c_void),
+        "cuLaunchKernel" => Some(crate::execution::cuLaunchKernel as *mut c_void),
+        "cuLaunchCooperativeKernel" => Some(crate::execution::cuLaunchCooperativeKernel as *mut c_void),
+        "cuFuncGetAttribute" => Some(crate::execution::cuFuncGetAttribute as *mut c_void),
+        "cuFuncSetAttribute" => Some(crate::execution::cuFuncSetAttribute as *mut c_void),
+        "cuFuncSetCacheConfig" => Some(crate::execution::cuFuncSetCacheConfig as *mut c_void),
+        "cuFuncSetSharedMemConfig" => Some(crate::execution::cuFuncSetSharedMemConfig as *mut c_void),
+        "cuFuncGetModule" => Some(crate::execution::cuFuncGetModule as *mut c_void),
+        "cuFuncGetName" => Some(crate::execution::cuFuncGetName as *mut c_void),
         "cuOccupancyMaxActiveBlocksPerMultiprocessor" => {
-            Some(crate::cuOccupancyMaxActiveBlocksPerMultiprocessor as *mut c_void)
+            Some(crate::execution::cuOccupancyMaxActiveBlocksPerMultiprocessor as *mut c_void)
         }
         "cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags" => {
-            Some(crate::cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags as *mut c_void)
+            Some(crate::execution::cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags as *mut c_void)
         }
         "cuOccupancyAvailableDynamicSMemPerBlock" => {
-            Some(crate::cuOccupancyAvailableDynamicSMemPerBlock as *mut c_void)
+            Some(crate::execution::cuOccupancyAvailableDynamicSMemPerBlock as *mut c_void)
         }
 
         // ── Stream Management ───────────────────────────────────
-        "cuStreamCreate" => Some(crate::cuStreamCreate as *mut c_void),
-        "cuStreamCreateWithPriority" => Some(crate::cuStreamCreateWithPriority as *mut c_void),
+        "cuStreamCreate" => Some(crate::stream::cuStreamCreate as *mut c_void),
+        "cuStreamCreateWithPriority" => Some(crate::stream::cuStreamCreateWithPriority as *mut c_void),
         "cuStreamDestroy" | "cuStreamDestroy_v2" => {
-            Some(crate::cuStreamDestroy_v2 as *mut c_void)
+            Some(crate::stream::cuStreamDestroy_v2 as *mut c_void)
         }
-        "cuStreamSynchronize" => Some(crate::cuStreamSynchronize as *mut c_void),
-        "cuStreamQuery" => Some(crate::cuStreamQuery as *mut c_void),
-        "cuStreamWaitEvent" => Some(crate::cuStreamWaitEvent as *mut c_void),
-        "cuStreamGetPriority" => Some(crate::cuStreamGetPriority as *mut c_void),
-        "cuStreamGetFlags" => Some(crate::cuStreamGetFlags as *mut c_void),
-        "cuStreamGetCtx" | "cuStreamGetCtx_v2" => Some(crate::cuStreamGetCtx_v2 as *mut c_void),
+        "cuStreamSynchronize" => Some(crate::stream::cuStreamSynchronize as *mut c_void),
+        "cuStreamQuery" => Some(crate::stream::cuStreamQuery as *mut c_void),
+        "cuStreamWaitEvent" => Some(crate::stream::cuStreamWaitEvent as *mut c_void),
+        "cuStreamGetPriority" => Some(crate::stream::cuStreamGetPriority as *mut c_void),
+        "cuStreamGetFlags" => Some(crate::stream::cuStreamGetFlags as *mut c_void),
+        "cuStreamGetCtx" | "cuStreamGetCtx_v2" => Some(crate::stream::cuStreamGetCtx_v2 as *mut c_void),
 
         // ── Event Management ────────────────────────────────────
-        "cuEventCreate" => Some(crate::cuEventCreate as *mut c_void),
-        "cuEventDestroy" | "cuEventDestroy_v2" => Some(crate::cuEventDestroy_v2 as *mut c_void),
-        "cuEventRecord" => Some(crate::cuEventRecord as *mut c_void),
-        "cuEventRecordWithFlags" => Some(crate::cuEventRecordWithFlags as *mut c_void),
-        "cuEventSynchronize" => Some(crate::cuEventSynchronize as *mut c_void),
-        "cuEventQuery" => Some(crate::cuEventQuery as *mut c_void),
-        "cuEventElapsedTime" => Some(crate::cuEventElapsedTime as *mut c_void),
+        "cuEventCreate" => Some(crate::event::cuEventCreate as *mut c_void),
+        "cuEventDestroy" | "cuEventDestroy_v2" => Some(crate::event::cuEventDestroy_v2 as *mut c_void),
+        "cuEventRecord" => Some(crate::event::cuEventRecord as *mut c_void),
+        "cuEventRecordWithFlags" => Some(crate::event::cuEventRecordWithFlags as *mut c_void),
+        "cuEventSynchronize" => Some(crate::event::cuEventSynchronize as *mut c_void),
+        "cuEventQuery" => Some(crate::event::cuEventQuery as *mut c_void),
+        "cuEventElapsedTime" => Some(crate::event::cuEventElapsedTime as *mut c_void),
 
         // ── Pointer Queries ─────────────────────────────────────
-        "cuPointerGetAttribute" => Some(crate::cuPointerGetAttribute as *mut c_void),
-        "cuPointerSetAttribute" => Some(crate::cuPointerSetAttribute as *mut c_void),
+        "cuPointerGetAttribute" => Some(crate::memory::cuPointerGetAttribute as *mut c_void),
+        "cuPointerSetAttribute" => Some(crate::memory::cuPointerSetAttribute as *mut c_void),
 
         // ── Proc Address (self-referential) ─────────────────────
         "cuGetProcAddress" => Some(cuGetProcAddress as *mut c_void),

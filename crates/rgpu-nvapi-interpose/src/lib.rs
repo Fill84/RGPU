@@ -24,6 +24,7 @@ use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::{Mutex, OnceLock};
 
 use ipc_client::NvapiIpcClient;
+
 use rgpu_protocol::gpu_info::GpuInfo;
 
 // ── NVAPI Status Codes ──────────────────────────────────────────────────
@@ -333,8 +334,8 @@ pub extern "C" fn rgpu_interpose_marker() -> c_int {
 
 // ── Main NVAPI Export ───────────────────────────────────────────────────
 
-#[no_mangle]
-pub unsafe extern "C" fn nvapi_QueryInterface(id: u32) -> *const c_void {
+#[allow(non_snake_case)]
+unsafe fn nvapi_QueryInterface_impl(id: u32) -> *const c_void {
     // Ensure real NVAPI is loaded (lazy, on first call)
     {
         if let Ok(mut state) = get_state().lock() {
@@ -380,9 +381,15 @@ pub unsafe extern "C" fn nvapi_QueryInterface(id: u32) -> *const c_void {
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn nvapi_QueryInterface(id: u32) -> *const c_void {
+    rgpu_common::ffi::catch_panic(std::ptr::null(), || nvapi_QueryInterface_impl(id))
+}
+
 // ── NvAPI_Initialize ────────────────────────────────────────────────────
 
-unsafe extern "C" fn our_initialize() -> NvAPI_Status {
+#[allow(non_snake_case)]
+unsafe fn our_initialize_impl() -> NvAPI_Status {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -451,9 +458,14 @@ unsafe extern "C" fn our_initialize() -> NvAPI_Status {
     NVAPI_OK
 }
 
+unsafe extern "C" fn our_initialize() -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_initialize_impl())
+}
+
 // ── NvAPI_Unload ────────────────────────────────────────────────────────
 
-unsafe extern "C" fn our_unload() -> NvAPI_Status {
+#[allow(non_snake_case)]
+unsafe fn our_unload_impl() -> NvAPI_Status {
     let mut state = match get_state().lock() {
         Ok(s) => s,
         Err(_) => return NVAPI_ERROR,
@@ -477,9 +489,14 @@ unsafe extern "C" fn our_unload() -> NvAPI_Status {
     NVAPI_OK
 }
 
+unsafe extern "C" fn our_unload() -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_unload_impl())
+}
+
 // ── NvAPI_EnumPhysicalGPUs ──────────────────────────────────────────────
 
-unsafe extern "C" fn our_enum_physical_gpus(
+#[allow(non_snake_case)]
+unsafe fn our_enum_physical_gpus_impl(
     handles: *mut NvPhysicalGpuHandle,
     count: *mut u32,
 ) -> NvAPI_Status {
@@ -512,9 +529,17 @@ unsafe extern "C" fn our_enum_physical_gpus(
     NVAPI_OK
 }
 
+unsafe extern "C" fn our_enum_physical_gpus(
+    handles: *mut NvPhysicalGpuHandle,
+    count: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_enum_physical_gpus_impl(handles, count))
+}
+
 // ── NvAPI_EnumLogicalGPUs ───────────────────────────────────────────────
 
-unsafe extern "C" fn our_enum_logical_gpus(
+#[allow(non_snake_case)]
+unsafe fn our_enum_logical_gpus_impl(
     handles: *mut NvLogicalGpuHandle,
     count: *mut u32,
 ) -> NvAPI_Status {
@@ -553,9 +578,17 @@ unsafe extern "C" fn our_enum_logical_gpus(
     NVAPI_OK
 }
 
+unsafe extern "C" fn our_enum_logical_gpus(
+    handles: *mut NvLogicalGpuHandle,
+    count: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_enum_logical_gpus_impl(handles, count))
+}
+
 // ── NvAPI_GPU_GetFullName ───────────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_full_name(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_full_name_impl(
     handle: NvPhysicalGpuHandle,
     name: *mut c_char,
 ) -> NvAPI_Status {
@@ -593,9 +626,17 @@ unsafe extern "C" fn our_gpu_get_full_name(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_full_name(
+    handle: NvPhysicalGpuHandle,
+    name: *mut c_char,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_full_name_impl(handle, name))
+}
+
 // ── NvAPI_GPU_GetPhysicalFrameBufferSize ────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_physical_frame_buffer_size(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_physical_frame_buffer_size_impl(
     handle: NvPhysicalGpuHandle,
     size_kb: *mut u32,
 ) -> NvAPI_Status {
@@ -631,9 +672,17 @@ unsafe extern "C" fn our_gpu_get_physical_frame_buffer_size(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_physical_frame_buffer_size(
+    handle: NvPhysicalGpuHandle,
+    size_kb: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_physical_frame_buffer_size_impl(handle, size_kb))
+}
+
 // ── NvAPI_GPU_GetVirtualFrameBufferSize ─────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_virtual_frame_buffer_size(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_virtual_frame_buffer_size_impl(
     handle: NvPhysicalGpuHandle,
     size_kb: *mut u32,
 ) -> NvAPI_Status {
@@ -669,9 +718,17 @@ unsafe extern "C" fn our_gpu_get_virtual_frame_buffer_size(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_virtual_frame_buffer_size(
+    handle: NvPhysicalGpuHandle,
+    size_kb: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_virtual_frame_buffer_size_impl(handle, size_kb))
+}
+
 // ── NvAPI_GPU_GetGpuCoreCount ───────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_core_count(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_core_count_impl(
     handle: NvPhysicalGpuHandle,
     count: *mut u32,
 ) -> NvAPI_Status {
@@ -708,9 +765,17 @@ unsafe extern "C" fn our_gpu_get_core_count(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_core_count(
+    handle: NvPhysicalGpuHandle,
+    count: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_core_count_impl(handle, count))
+}
+
 // ── NvAPI_GPU_GetAllClockFrequencies ────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_all_clock_frequencies(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_all_clock_frequencies_impl(
     handle: NvPhysicalGpuHandle,
     clk_freqs: *mut NvGpuClockFrequencies,
 ) -> NvAPI_Status {
@@ -778,9 +843,17 @@ unsafe extern "C" fn our_gpu_get_all_clock_frequencies(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_all_clock_frequencies(
+    handle: NvPhysicalGpuHandle,
+    clk_freqs: *mut NvGpuClockFrequencies,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_all_clock_frequencies_impl(handle, clk_freqs))
+}
+
 // ── NvAPI_GPU_GetThermalSettings ────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_thermal_settings(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_thermal_settings_impl(
     handle: NvPhysicalGpuHandle,
     sensor_index: c_uint,
     thermal_settings: *mut NvGpuThermalSettings,
@@ -810,9 +883,18 @@ unsafe extern "C" fn our_gpu_get_thermal_settings(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_thermal_settings(
+    handle: NvPhysicalGpuHandle,
+    sensor_index: c_uint,
+    thermal_settings: *mut NvGpuThermalSettings,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_thermal_settings_impl(handle, sensor_index, thermal_settings))
+}
+
 // ── NvAPI_GPU_GetMemoryInfo ─────────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_memory_info(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_memory_info_impl(
     handle: NvPhysicalGpuHandle,
     mem_info: *mut NvDisplayDriverMemoryInfo,
 ) -> NvAPI_Status {
@@ -858,9 +940,17 @@ unsafe extern "C" fn our_gpu_get_memory_info(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_memory_info(
+    handle: NvPhysicalGpuHandle,
+    mem_info: *mut NvDisplayDriverMemoryInfo,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_memory_info_impl(handle, mem_info))
+}
+
 // ── NvAPI_GPU_GetBusType ────────────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_bus_type(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_bus_type_impl(
     handle: NvPhysicalGpuHandle,
     bus_type: *mut u32,
 ) -> NvAPI_Status {
@@ -889,9 +979,17 @@ unsafe extern "C" fn our_gpu_get_bus_type(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_bus_type(
+    handle: NvPhysicalGpuHandle,
+    bus_type: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_bus_type_impl(handle, bus_type))
+}
+
 // ── NvAPI_GPU_GetBusId ──────────────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_bus_id(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_bus_id_impl(
     handle: NvPhysicalGpuHandle,
     bus_id: *mut u32,
 ) -> NvAPI_Status {
@@ -921,9 +1019,17 @@ unsafe extern "C" fn our_gpu_get_bus_id(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_bus_id(
+    handle: NvPhysicalGpuHandle,
+    bus_id: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_bus_id_impl(handle, bus_id))
+}
+
 // ── NvAPI_GPU_GetPCIIdentifiers ─────────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_pci_identifiers(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_pci_identifiers_impl(
     handle: NvPhysicalGpuHandle,
     device_id: *mut u32,
     sub_system_id: *mut u32,
@@ -965,9 +1071,20 @@ unsafe extern "C" fn our_gpu_get_pci_identifiers(
     NVAPI_NO_IMPLEMENTATION
 }
 
+unsafe extern "C" fn our_gpu_get_pci_identifiers(
+    handle: NvPhysicalGpuHandle,
+    device_id: *mut u32,
+    sub_system_id: *mut u32,
+    revision_id: *mut u32,
+    ext_device_id: *mut u32,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_pci_identifiers_impl(handle, device_id, sub_system_id, revision_id, ext_device_id))
+}
+
 // ── NvAPI_GPU_GetVbiosVersionString ─────────────────────────────────────
 
-unsafe extern "C" fn our_gpu_get_vbios_version_string(
+#[allow(non_snake_case)]
+unsafe fn our_gpu_get_vbios_version_string_impl(
     handle: NvPhysicalGpuHandle,
     bios_revision: *mut c_char,
 ) -> NvAPI_Status {
@@ -993,4 +1110,11 @@ unsafe extern "C" fn our_gpu_get_vbios_version_string(
         }
     }
     NVAPI_NO_IMPLEMENTATION
+}
+
+unsafe extern "C" fn our_gpu_get_vbios_version_string(
+    handle: NvPhysicalGpuHandle,
+    bios_revision: *mut c_char,
+) -> NvAPI_Status {
+    rgpu_common::ffi::catch_panic(NVAPI_ERROR, || our_gpu_get_vbios_version_string_impl(handle, bios_revision))
 }
