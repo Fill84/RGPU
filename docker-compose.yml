@@ -1,12 +1,23 @@
 # RGPU Integration Test Suite
 #
-# Usage:
-#   docker compose up --build --abort-on-container-exit
+# Two modes:
+#
+#   1. Docker-only (server + tests both in containers):
+#      docker compose up --build --abort-on-container-exit
+#      - Limited: no NVENC/NVDEC/Vulkan (WSL2 Docker lacks these drivers)
+#      - Good for: CUDA + NVML basic testing
+#
+#   2. Native server (server on host, tests in container):
+#      - Start server on your machine:  rgpu server --config <config>
+#      - Run tests:  docker compose --profile native up --build test-native
+#      - Full stack: CUDA + NVML + NVENC + NVDEC + FFmpeg hwaccel
+#      - Set RGPU_TOKEN to match your server config
 #
 # First run compiles the full Rust workspace (~10-15 min).
 # Subsequent runs use Docker layer cache (~1-2 min if only tests changed).
 
 services:
+  # --- Docker-only mode: server in container ---
   server:
     build:
       context: .
@@ -27,6 +38,7 @@ services:
       retries: 15
       start_period: 10s
 
+  # --- Docker-only mode: test-runner connects to Docker server ---
   test-runner:
     build:
       context: .
@@ -37,3 +49,13 @@ services:
     environment:
       - RGPU_TOKEN=test-token-docker
       - RGPU_SERVER=server:9876
+
+  # --- Native mode: test-runner connects to host server ---
+  test-native:
+    profiles: ["native"]
+    build:
+      context: .
+      target: test-runner
+    environment:
+      - RGPU_TOKEN=${RGPU_TOKEN:-test-token-docker}
+      - RGPU_SERVER=host.docker.internal:9876
