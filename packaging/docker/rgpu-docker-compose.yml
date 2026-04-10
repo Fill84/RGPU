@@ -1,0 +1,14 @@
+# RGPU Docker Compose — drop this alongside your project's docker-compose.yml
+# as docker-compose.override.yml to automatically add RGPU GPU support.
+#
+# Or include it: docker compose -f docker-compose.yml -f rgpu-docker-compose.yml up
+
+x-rgpu-gpu: &rgpu-gpu
+  environment:
+    - RGPU_IPC_ADDRESS=host.docker.internal:9877
+  volumes:
+    # Mount RGPU interpose libs (adjust paths to your installation)
+    - ${RGPU_LIB_PATH:-/usr/lib/rgpu}/librgpu_nvml_interpose.so:/usr/local/nvidia/lib64/libnvidia-ml.so.1:ro
+    - ${RGPU_LIB_PATH:-/usr/lib/rgpu}/librgpu_cuda_interpose.so:/usr/local/nvidia/lib64/libcuda.so.1:ro
+    - ${RGPU_LIB_PATH:-/usr/lib/rgpu}/librgpu_nvenc_interpose.so:/usr/local/nvidia/lib64/libnvidia-encode.so.1:ro
+    - ${RGPU_LIB_PATH:-/usr/lib/rgpu}/librgpu_nvdec_interpose.so:/usr/local/nvidia/lib64/libnvcuvid.so.1:ro
