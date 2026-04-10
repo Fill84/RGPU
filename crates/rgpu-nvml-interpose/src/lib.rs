@@ -446,6 +446,18 @@ pub unsafe extern "C" fn nvmlInit() -> nvmlReturn_t {
     rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInit_impl())
 }
 
+/// nvmlInitWithFlags — used by nvidia-smi and newer NVML consumers.
+/// The flags parameter is ignored; we always do a full init.
+#[allow(non_snake_case)]
+unsafe fn nvmlInitWithFlags_impl(_flags: c_uint) -> nvmlReturn_t {
+    nvmlInit_v2_impl()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nvmlInitWithFlags(flags: c_uint) -> nvmlReturn_t {
+    rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInitWithFlags_impl(flags))
+}
+
 #[allow(non_snake_case)]
 unsafe fn nvmlShutdown_impl() -> nvmlReturn_t {
     let mut state = match get_state().lock() {
