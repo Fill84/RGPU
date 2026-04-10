@@ -112,6 +112,12 @@ enum Commands {
         json: bool,
     },
 
+    /// Set the installation role (server or client). Requires admin/root.
+    SetRole {
+        /// Role to set: "server" or "client"
+        role: String,
+    },
+
     /// Launch the RGPU desktop GUI
     #[cfg(feature = "ui")]
     Ui {
@@ -167,6 +173,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             pid_file,
             service: _,
         }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Server)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -204,6 +212,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             pid_file,
             service: _,
         }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Client)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -363,6 +373,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     eprintln!("Unexpected response from server");
                 }
             }
+        }
+
+        Some(Commands::SetRole { role }) => {
+            let r = rgpu_core::role::Role::from_str(&role)
+                .ok_or_else(|| anyhow::anyhow!("invalid role '{}': use 'server' or 'client'", role))?;
+            rgpu_core::role::set_role(r)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Role set to '{}'. This machine will only accept '{}' commands.", r.as_str(), r.as_str());
         }
 
         None => {
