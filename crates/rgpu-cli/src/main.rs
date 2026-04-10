@@ -175,6 +175,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }) => {
             rgpu_core::role::check_role(rgpu_core::role::Role::Server)
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let _lock = rgpu_core::instance_lock::InstanceLock::try_acquire("server")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
             }
@@ -213,6 +215,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             service: _,
         }) => {
             rgpu_core::role::check_role(rgpu_core::role::Role::Client)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let _lock = rgpu_core::instance_lock::InstanceLock::try_acquire("client")
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             if let Some(ref path) = pid_file {
                 std::fs::write(path, std::process::id().to_string())?;
