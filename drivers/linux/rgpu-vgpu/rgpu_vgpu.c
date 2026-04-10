@@ -6,6 +6,10 @@
  * managed by the RGPU daemon. The daemon communicates with this module
  * via ioctl on /dev/rgpu_control to add/remove virtual GPU devices.
  *
+ * Device nodes are created as /dev/nvidia{N} using NVIDIA's major number
+ * (195) with the minor number supplied by userspace. This makes them
+ * discoverable by nvidia-container-toolkit without patching the toolkit.
+ *
  * Copyright (C) 2026 RGPU Project
  */
 
@@ -24,12 +28,17 @@
 
 #define RGPU_DRIVER_NAME    "rgpu_vgpu"
 #define RGPU_CONTROL_NAME   "rgpu_control"
-#define RGPU_GPU_NAME_FMT   "rgpu_gpu%u"
 
 /* Module parameters */
 static int max_gpus = 16;
 module_param(max_gpus, int, 0444);
 MODULE_PARM_DESC(max_gpus, "Maximum number of virtual GPUs (default: 16)");
+
+/* NVIDIA uses major number 195 for all /dev/nvidia* devices */
+#define NVIDIA_MAJOR 195
+
+/* Device class — we try "nvidia" first; fall back if a real driver claimed it */
+static struct class *nvidia_class;
 
 /* ---- IOCTL definitions ---- */
 
@@ -39,6 +48,7 @@ struct rgpu_gpu_info {
 	char name[128];        /* e.g., "NVIDIA GeForce RTX 3070 (Remote - RGPU)" */
 	__u64 total_memory;    /* VRAM in bytes */
 	__u32 index;           /* GPU index (output for ADD, input for REMOVE) */
+	__u32 minor_number;    /* nvidia minor number to create (e.g. 1 -> /dev/nvidia1) */
 };
 
 struct rgpu_gpu_list {
@@ -58,9 +68,11 @@ struct rgpu_vgpu {
 	char name[128];
 	u64 total_memory;
 	u32 index;
+	u32 nvidia_minor;         /* the /dev/nvidia{N} minor we created */
 	struct platform_device *pdev;
-	struct miscdevice misc;
-	char misc_name[32];
+	struct cdev cdev;         /* character device (replaces miscdevice) */
+	struct device *dev;       /* sysfs device node */
+	dev_t devno;              /* major:minor combo */
 };
 
 /* ---- Global state ---- */
@@ -70,6 +82,12 @@ static DEFINE_MUTEX(gpu_lock);
 static struct miscdevice control_dev;
 
 /* ---- GPU device file operations (minimal) ---- */
+/*
+ * These handlers are intentionally minimal. The device nodes only need to
+ * EXIST and be openable. Real GPU ioctls are intercepted at the library
+ * level (librgpu_cuda_interpose.so / librgpu_vk_icd.so) before any device
+ * I/O reaches this driver.
+ */
 
 static int rgpu_gpu_open(struct inode *inode, struct file *filp)
 {
@@ -81,18 +99,23 @@ static int rgpu_gpu_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static ssize_t rgpu_gpu_read(struct file *filp, char __user *buf,
-			     size_t count, loff_t *ppos)
+static long rgpu_gpu_ioctl(struct file *filp, unsigned int cmd,
+			   unsigned long arg)
 {
-	/* Applications can read basic info; for now return EOF */
-	return 0;
+	/*
+	 * Return -ENODEV for all ioctls. Our interpose libraries handle
+	 * everything at the library level; nothing should reach here in
+	 * normal operation.
+	 */
+	return -ENODEV;
 }
 
 static const struct file_operations rgpu_gpu_fops = {
-	.owner   = THIS_MODULE,
-	.open    = rgpu_gpu_open,
-	.release = rgpu_gpu_release,
-	.read    = rgpu_gpu_read,
+	.owner          = THIS_MODULE,
+	.open           = rgpu_gpu_open,
+	.release        = rgpu_gpu_release,
+	.unlocked_ioctl = rgpu_gpu_ioctl,
+	.compat_ioctl   = rgpu_gpu_ioctl,
 };
 
 /* ---- Platform device release ---- */
@@ -108,6 +131,7 @@ static int rgpu_add_gpu(struct rgpu_gpu_info __user *uinfo)
 {
 	struct rgpu_gpu_info info;
 	struct rgpu_vgpu *vgpu;
+	dev_t devno;
 	int i, ret, slot = -1;
 
 	if (copy_from_user(&info, uinfo, sizeof(info)))
@@ -135,10 +159,41 @@ static int rgpu_add_gpu(struct rgpu_gpu_info __user *uinfo)
 	strscpy(vgpu->name, info.name, sizeof(vgpu->name));
 	vgpu->total_memory = info.total_memory;
 	vgpu->index = slot;
+	vgpu->nvidia_minor = info.minor_number;
+
+	/* Build the dev_t for /dev/nvidia{minor} */
+	devno = MKDEV(NVIDIA_MAJOR, info.minor_number);
+	vgpu->devno = devno;
+
+	/* Register the character device with the kernel */
+	cdev_init(&vgpu->cdev, &rgpu_gpu_fops);
+	vgpu->cdev.owner = THIS_MODULE;
+
+	ret = cdev_add(&vgpu->cdev, devno, 1);
+	if (ret) {
+		pr_err("rgpu: cdev_add failed for nvidia%u: %d\n",
+		       info.minor_number, ret);
+		mutex_unlock(&gpu_lock);
+		return ret;
+	}
+
+	/* Create the /dev/nvidia{N} node via sysfs / udev */
+	vgpu->dev = device_create(nvidia_class, NULL, devno, NULL,
+				  "nvidia%u", info.minor_number);
+	if (IS_ERR(vgpu->dev)) {
+		ret = PTR_ERR(vgpu->dev);
+		pr_err("rgpu: device_create failed for nvidia%u: %d\n",
+		       info.minor_number, ret);
+		cdev_del(&vgpu->cdev);
+		mutex_unlock(&gpu_lock);
+		return ret;
+	}
 
 	/* Create platform device for sysfs presence */
 	vgpu->pdev = platform_device_alloc(RGPU_DRIVER_NAME, slot);
 	if (!vgpu->pdev) {
+		device_destroy(nvidia_class, devno);
+		cdev_del(&vgpu->cdev);
 		mutex_unlock(&gpu_lock);
 		return -ENOMEM;
 	}
@@ -147,29 +202,13 @@ static int rgpu_add_gpu(struct rgpu_gpu_info __user *uinfo)
 	ret = platform_device_add(vgpu->pdev);
 	if (ret) {
 		platform_device_put(vgpu->pdev);
+		device_destroy(nvidia_class, devno);
+		cdev_del(&vgpu->cdev);
 		mutex_unlock(&gpu_lock);
 		return ret;
 	}
 
-	/* Create /dev/rgpu_gpuN misc device */
-	snprintf(vgpu->misc_name, sizeof(vgpu->misc_name),
-		 RGPU_GPU_NAME_FMT, slot);
-
-	vgpu->misc.minor = MISC_DYNAMIC_MINOR;
-	vgpu->misc.name  = vgpu->misc_name;
-	vgpu->misc.fops  = &rgpu_gpu_fops;
-	vgpu->misc.mode  = 0666;
-
-	ret = misc_register(&vgpu->misc);
-	if (ret) {
-		platform_device_unregister(vgpu->pdev);
-		mutex_unlock(&gpu_lock);
-		return ret;
-	}
-
-	/* Add sysfs attributes on the platform device */
 	dev_set_drvdata(&vgpu->pdev->dev, vgpu);
-
 	vgpu->active = true;
 
 	/* Write assigned index back to userspace */
@@ -179,8 +218,9 @@ static int rgpu_add_gpu(struct rgpu_gpu_info __user *uinfo)
 	if (copy_to_user(uinfo, &info, sizeof(info)))
 		return -EFAULT;
 
-	pr_info("rgpu: added virtual GPU %u: %s (%llu MB VRAM)\n",
-		slot, vgpu->name, vgpu->total_memory / (1024 * 1024));
+	pr_info("rgpu: added /dev/nvidia%u -> slot %u: %s (%llu MB VRAM)\n",
+		vgpu->nvidia_minor, slot, vgpu->name,
+		vgpu->total_memory / (1024 * 1024));
 
 	return 0;
 }
@@ -206,11 +246,12 @@ static int rgpu_remove_gpu(struct rgpu_gpu_info __user *uinfo)
 		return -ENODEV;
 	}
 
-	pr_info("rgpu: removing virtual GPU %u: %s\n",
-		vgpu->index, vgpu->name);
+	pr_info("rgpu: removing /dev/nvidia%u (slot %u): %s\n",
+		vgpu->nvidia_minor, vgpu->index, vgpu->name);
 
-	misc_deregister(&vgpu->misc);
 	platform_device_unregister(vgpu->pdev);
+	device_destroy(nvidia_class, vgpu->devno);
+	cdev_del(&vgpu->cdev);
 	vgpu->active = false;
 
 	mutex_unlock(&gpu_lock);
@@ -245,6 +286,11 @@ static int rgpu_list_gpus(struct rgpu_gpu_list __user *ulist)
 		}
 		if (put_user(gpus[i].index,
 			     &ulist->infos[count].index)) {
+			mutex_unlock(&gpu_lock);
+			return -EFAULT;
+		}
+		if (put_user(gpus[i].nvidia_minor,
+			     &ulist->infos[count].minor_number)) {
 			mutex_unlock(&gpu_lock);
 			return -EFAULT;
 		}
@@ -297,6 +343,24 @@ static int __init rgpu_vgpu_init(void)
 	if (!gpus)
 		return -ENOMEM;
 
+	/*
+	 * Create the device class used for device_create(). We try "nvidia"
+	 * first so that udev sees the same subsystem name as the real driver.
+	 * If a real nvidia driver is already loaded and owns that class name,
+	 * we fall back to "rgpu_nvidia" to avoid a collision.
+	 */
+	nvidia_class = class_create("nvidia");
+	if (IS_ERR(nvidia_class)) {
+		pr_warn("rgpu: class 'nvidia' already exists, using 'rgpu_nvidia'\n");
+		nvidia_class = class_create("rgpu_nvidia");
+		if (IS_ERR(nvidia_class)) {
+			ret = PTR_ERR(nvidia_class);
+			pr_err("rgpu: failed to create device class: %d\n", ret);
+			kfree(gpus);
+			return ret;
+		}
+	}
+
 	/* Register /dev/rgpu_control */
 	control_dev.minor = MISC_DYNAMIC_MINOR;
 	control_dev.name  = RGPU_CONTROL_NAME;
@@ -306,11 +370,13 @@ static int __init rgpu_vgpu_init(void)
 	ret = misc_register(&control_dev);
 	if (ret) {
 		pr_err("rgpu: failed to register control device: %d\n", ret);
+		class_destroy(nvidia_class);
 		kfree(gpus);
 		return ret;
 	}
 
-	pr_info("rgpu: virtual GPU driver loaded (max_gpus=%d)\n", max_gpus);
+	pr_info("rgpu: virtual GPU driver loaded (max_gpus=%d, major=%d)\n",
+		max_gpus, NVIDIA_MAJOR);
 	return 0;
 }
 
@@ -322,14 +388,16 @@ static void __exit rgpu_vgpu_exit(void)
 	mutex_lock(&gpu_lock);
 	for (i = 0; i < max_gpus; i++) {
 		if (gpus[i].active) {
-			misc_deregister(&gpus[i].misc);
 			platform_device_unregister(gpus[i].pdev);
+			device_destroy(nvidia_class, gpus[i].devno);
+			cdev_del(&gpus[i].cdev);
 			gpus[i].active = false;
 		}
 	}
 	mutex_unlock(&gpu_lock);
 
 	misc_deregister(&control_dev);
+	class_destroy(nvidia_class);
 	kfree(gpus);
 
 	pr_info("rgpu: virtual GPU driver unloaded\n");
@@ -340,5 +408,5 @@ module_exit(rgpu_vgpu_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("RGPU Project");
-MODULE_DESCRIPTION("RGPU Virtual GPU Device Driver");
-MODULE_VERSION("0.1.0");
+MODULE_DESCRIPTION("RGPU Virtual GPU Device Driver — creates /dev/nvidia{N}");
+MODULE_VERSION("0.2.0");
