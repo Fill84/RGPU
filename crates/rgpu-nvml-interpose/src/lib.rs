@@ -89,6 +89,7 @@ struct RealNvml {
     system_get_driver_version: unsafe extern "C" fn(*mut c_char, c_uint) -> nvmlReturn_t,
     system_get_nvml_version: unsafe extern "C" fn(*mut c_char, c_uint) -> nvmlReturn_t,
     error_string: unsafe extern "C" fn(nvmlReturn_t) -> *const c_char,
+    internal_get_export_table: Option<unsafe extern "C" fn(*mut *const std::ffi::c_void, *const std::ffi::c_void) -> nvmlReturn_t>,
 }
 
 // Safety: RealNvml contains function pointers and a Library handle which are
@@ -147,6 +148,9 @@ impl RealNvml {
             let system_get_driver_version = load_sym(&lib, b"nvmlSystemGetDriverVersion")?;
             let system_get_nvml_version = load_sym(&lib, b"nvmlSystemGetNVMLVersion")?;
             let error_string = load_sym(&lib, b"nvmlErrorString")?;
+            let internal_get_export_table: Option<unsafe extern "C" fn(*mut *const std::ffi::c_void, *const std::ffi::c_void) -> nvmlReturn_t> =
+                lib.get::<unsafe extern "C" fn(*mut *const std::ffi::c_void, *const std::ffi::c_void) -> nvmlReturn_t>(b"nvmlInternalGetExportTable")
+                    .ok().map(|s| *s);
 
             Ok(Self {
                 _lib: lib,
@@ -167,6 +171,7 @@ impl RealNvml {
                 system_get_driver_version,
                 system_get_nvml_version,
                 error_string,
+                internal_get_export_table,
             })
         }
     }
@@ -458,14 +463,22 @@ pub unsafe extern "C" fn nvmlInitWithFlags(flags: c_uint) -> nvmlReturn_t {
     rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInitWithFlags_impl(flags))
 }
 
-/// Internal NVIDIA export table function used by nvidia-smi to load the API.
-/// We return NOT_SUPPORTED since we don't have an internal table — nvidia-smi
-/// will fall back to standard NVML function calls.
+/// Internal NVIDIA export table function used by nvidia-smi.
+/// Forwards to the real NVML — nvidia-smi refuses to work without it.
 #[no_mangle]
 pub unsafe extern "C" fn nvmlInternalGetExportTable(
-    _table: *mut *const std::ffi::c_void,
-    _guid: *const std::ffi::c_void,
+    table: *mut *const std::ffi::c_void,
+    guid: *const std::ffi::c_void,
 ) -> nvmlReturn_t {
+    let state = match get_state().lock() {
+        Ok(s) => s,
+        Err(_) => return NVML_ERROR_UNKNOWN,
+    };
+    if let Some(ref real) = state.real_nvml {
+        if let Some(func) = real.internal_get_export_table {
+            return func(table, guid);
+        }
+    }
     NVML_ERROR_NOT_SUPPORTED
 }
 
