@@ -96,24 +96,32 @@ run_test "NVML Interpose" \
     "LD_PRELOAD=/usr/lib/rgpu/librgpu_nvml_interpose.so" \
     true
 
-# === Optional tests (may fail in Docker/WSL2 environments) ===
-
-# Vulkan test — requires Vulkan ICD which may not be available in WSL2 containers
-run_test "Vulkan ICD" \
-    "/usr/local/bin/test_vulkan" \
-    "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/rgpu_icd.json VK_LOADER_DEBUG=error" \
-    false
-
-# NVENC test — requires libnvidia-encode.so which may not be in container
+# NVENC test
 run_test "NVENC Interpose" \
     "/usr/local/bin/test_nvenc" \
     "LD_PRELOAD=/usr/lib/rgpu/librgpu_nvenc_interpose.so" \
-    false
+    true
 
-# NVDEC test — requires libnvcuvid.so which may not be in container
+# NVDEC test
 run_test "NVDEC Interpose" \
     "/usr/local/bin/test_nvdec" \
     "LD_PRELOAD=/usr/lib/rgpu/librgpu_nvdec_interpose.so" \
+    true
+
+# FFmpeg hwaccel test — full encode/decode pipeline through RGPU
+# Uses system symlinks (libcuda.so.1, libnvidia-encode.so.1, libnvcuvid.so.1)
+# so FFmpeg finds our interpose libs via standard dlopen paths (no LD_PRELOAD needed)
+run_test "FFmpeg HWAccel" \
+    "/usr/local/bin/test_ffmpeg_hwaccel.sh" \
+    "" \
+    true
+
+# === Optional tests (run last — may crash server in some environments) ===
+
+# Vulkan test — run last because server-side Vulkan cleanup can crash on disconnect
+run_test "Vulkan ICD" \
+    "/usr/local/bin/test_vulkan" \
+    "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/rgpu_icd.json VK_LOADER_DEBUG=error" \
     false
 
 # Cleanup

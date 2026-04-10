@@ -98,6 +98,7 @@ FROM ubuntu:24.04 AS test-runner
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan1 \
     ca-certificates \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy rgpu binary (for client daemon)
@@ -111,7 +112,18 @@ COPY --from=builder /build/target/release/librgpu_nvml_interpose.so /usr/lib/rgp
 COPY --from=builder /build/target/release/librgpu_nvenc_interpose.so /usr/lib/rgpu/
 COPY --from=builder /build/target/release/librgpu_nvdec_interpose.so /usr/lib/rgpu/
 
-# Make interpose libraries discoverable
+# Create symlinks with standard NVIDIA library names so apps that dlopen
+# by system name (e.g. FFmpeg loading libcuda.so.1) find our interpose libs
+RUN ln -sf /usr/lib/rgpu/librgpu_cuda_interpose.so /usr/lib/rgpu/libcuda.so.1 && \
+    ln -sf /usr/lib/rgpu/librgpu_cuda_interpose.so /usr/lib/rgpu/libcuda.so && \
+    ln -sf /usr/lib/rgpu/librgpu_nvenc_interpose.so /usr/lib/rgpu/libnvidia-encode.so.1 && \
+    ln -sf /usr/lib/rgpu/librgpu_nvenc_interpose.so /usr/lib/rgpu/libnvidia-encode.so && \
+    ln -sf /usr/lib/rgpu/librgpu_nvdec_interpose.so /usr/lib/rgpu/libnvcuvid.so.1 && \
+    ln -sf /usr/lib/rgpu/librgpu_nvdec_interpose.so /usr/lib/rgpu/libnvcuvid.so && \
+    ln -sf /usr/lib/rgpu/librgpu_nvml_interpose.so /usr/lib/rgpu/libnvidia-ml.so.1 && \
+    ln -sf /usr/lib/rgpu/librgpu_nvml_interpose.so /usr/lib/rgpu/libnvidia-ml.so
+
+# Make interpose libraries discoverable via ldconfig
 RUN echo "/usr/lib/rgpu" > /etc/ld.so.conf.d/rgpu.conf && ldconfig
 
 # Copy Vulkan ICD manifest
@@ -125,9 +137,10 @@ COPY --from=builder /build/test_nvml /usr/local/bin/
 COPY --from=builder /build/test_nvenc /usr/local/bin/
 COPY --from=builder /build/test_nvdec /usr/local/bin/
 
-# Copy test runner script
+# Copy test scripts
 COPY tests/docker/run_tests.sh /usr/local/bin/run_tests.sh
-RUN chmod +x /usr/local/bin/run_tests.sh
+COPY tests/docker/test_ffmpeg_hwaccel.sh /usr/local/bin/test_ffmpeg_hwaccel.sh
+RUN chmod +x /usr/local/bin/run_tests.sh /usr/local/bin/test_ffmpeg_hwaccel.sh
 
 # RGPU_SERVER and RGPU_TOKEN must be set via environment
 ENTRYPOINT ["/usr/local/bin/run_tests.sh"]
