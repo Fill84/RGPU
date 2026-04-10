@@ -242,6 +242,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             client_config.servers.extend(rgpu_config.client.servers);
             client_config.include_local_gpus = rgpu_config.client.include_local_gpus;
             client_config.gpu_ordering = rgpu_config.client.gpu_ordering;
+            client_config.ipc_listen_address = rgpu_config.client.ipc_listen_address;
+            client_config.create_virtual_devices = rgpu_config.client.create_virtual_devices;
 
             if client_config.servers.is_empty() && !client_config.include_local_gpus {
                 anyhow::bail!("no servers configured and include_local_gpus is false. Use --server or add servers to rgpu.toml");
