@@ -28,6 +28,9 @@ struct VirtualGpuDevice {
     /// Used for removal via SetupDi.
     #[cfg(windows)]
     device_instance_id: Option<String>,
+    /// Linux: the assigned /dev/nvidiaN minor number
+    #[cfg(unix)]
+    minor_number: u32,
 }
 
 impl DeviceManager {
@@ -68,17 +71,37 @@ impl DeviceManager {
         self.devices.retain(|dev| !indices_to_remove.contains(&dev.index));
 
         // Find GPUs that are new and need to be added
-        for gpu in &remote_gpus {
-            let already_exists = self.devices.iter().any(|dev| {
-                dev.index == gpu.server_device_index && dev.name == gpu.device_name
-            });
+        let new_gpus: Vec<&&GpuInfo> = remote_gpus
+            .iter()
+            .filter(|gpu| {
+                !self.devices.iter().any(|dev| {
+                    dev.index == gpu.server_device_index && dev.name == gpu.device_name
+                })
+            })
+            .collect();
 
-            if !already_exists {
-                let friendly_name = format!("{} (Remote - RGPU)", gpu.device_name);
+        if !new_gpus.is_empty() {
+            #[cfg(unix)]
+            let base_minor = platform::find_highest_nvidia_minor() + 1;
+            #[cfg(windows)]
+            let base_minor = 0u32; // Windows doesn't use minor numbers
+
+            let mut next_minor = base_minor;
+            // Account for already-existing virtual devices
+            next_minor += self.devices.len() as u32;
+
+            for gpu in &new_gpus {
+                #[cfg_attr(windows, allow(unused_variables))]
+                let minor = next_minor;
+                next_minor += 1;
+
+                let friendly_name = &gpu.device_name; // No suffix for transparency
                 let vdev = self.create_device(
-                    &friendly_name,
+                    friendly_name,
                     gpu.server_device_index,
                     gpu.total_memory,
+                    #[cfg(unix)]
+                    minor,
                 );
                 if let Some(vdev) = vdev {
                     info!(
@@ -91,6 +114,10 @@ impl DeviceManager {
                 }
             }
         }
+
+        // Write GPU map file for NVML interpose
+        #[cfg(unix)]
+        self.write_gpu_map(&remote_gpus);
     }
 
     /// Remove all virtual device nodes (cleanup on shutdown).
@@ -109,6 +136,42 @@ impl DeviceManager {
         #[cfg(windows)]
         platform::cleanup_orphaned();
         // Linux: kernel module handles cleanup on module unload
+    }
+
+    /// Write the GPU map file so the NVML interpose can look up minor numbers.
+    #[cfg(unix)]
+    fn write_gpu_map(&self, remote_gpus: &[&GpuInfo]) {
+        let gpu_map_dir = "/run/rgpu";
+        let _ = std::fs::create_dir_all(gpu_map_dir);
+        let path = format!("{}/gpu_map.json", gpu_map_dir);
+
+        let entries: Vec<serde_json::Value> = self.devices.iter().enumerate().map(|(i, dev)| {
+            // Find the matching GpuInfo for server_id
+            let gpu = remote_gpus.iter().find(|g| {
+                g.server_device_index == dev.index && g.device_name == dev.name
+            });
+            serde_json::json!({
+                "pool_index": i,
+                "minor_number": dev.minor_number,
+                "server_id": gpu.map(|g| g.server_id).unwrap_or(0),
+                "device_index": dev.index,
+                "device_name": dev.name,
+                "total_memory": dev.total_memory,
+            })
+        }).collect();
+
+        let map = serde_json::json!({ "gpus": entries });
+
+        match serde_json::to_string_pretty(&map) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, &json) {
+                    warn!("failed to write GPU map to {}: {}", path, e);
+                } else {
+                    debug!("wrote GPU map to {} ({} entries)", path, entries.len());
+                }
+            }
+            Err(e) => warn!("failed to serialize GPU map: {}", e),
+        }
     }
 }
 
@@ -460,8 +523,8 @@ mod platform {
         total_memory: u64,
         /// Device index
         index: u32,
-        /// Padding for alignment
-        _pad: u32,
+        /// Assigned /dev/nvidiaN minor number
+        minor_number: u32,
     }
 
     /// _IOW(type, nr, size) for Linux ioctl number generation.
@@ -472,10 +535,39 @@ mod platform {
         ((dir << 30) | ((size as u64 & 0x3FFF) << 16) | ((magic as u64) << 8) | (nr as u64))
     }
 
+    /// _IOWR(type, nr, size) for Linux ioctl number generation.
+    /// Direction: _IOWR = 3 (read + write, kernel writes back).
+    /// Format: direction(2) | size(14) | type(8) | nr(8)
+    const fn ioctl_iowr(magic: u8, nr: u8, size: usize) -> u64 {
+        let dir: u64 = 3; // _IOC_READ | _IOC_WRITE
+        ((dir << 30) | ((size as u64 & 0x3FFF) << 16) | ((magic as u64) << 8) | (nr as u64))
+    }
+
     const RGPU_IOCTL_ADD_GPU: u64 =
-        ioctl_iow(RGPU_IOCTL_MAGIC, 1, std::mem::size_of::<RgpuGpuInfo>());
+        ioctl_iowr(RGPU_IOCTL_MAGIC, 1, std::mem::size_of::<RgpuGpuInfo>());
     const RGPU_IOCTL_REMOVE_GPU: u64 =
         ioctl_iow(RGPU_IOCTL_MAGIC, 2, std::mem::size_of::<u32>());
+
+    /// Scan /dev/nvidia* to find the highest existing NVIDIA minor number.
+    /// Returns 0 if no NVIDIA devices exist (meaning minor 0 is the first real GPU).
+    pub(super) fn find_highest_nvidia_minor() -> u32 {
+        let mut highest: i32 = -1;
+        if let Ok(entries) = std::fs::read_dir("/dev") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if let Some(suffix) = name_str.strip_prefix("nvidia") {
+                    // Only match nvidia0, nvidia1, etc. — not nvidiactl or nvidia-uvm
+                    if let Ok(minor) = suffix.parse::<u32>() {
+                        if minor as i32 > highest {
+                            highest = minor as i32;
+                        }
+                    }
+                }
+            }
+        }
+        if highest < 0 { 0 } else { highest as u32 }
+    }
 
     impl DeviceManager {
         /// Create a virtual GPU device node via ioctl to /dev/rgpu_control.
@@ -484,6 +576,7 @@ mod platform {
             friendly_name: &str,
             index: u32,
             total_memory: u64,
+            minor_number: u32,
         ) -> Option<VirtualGpuDevice> {
             let file = match OpenOptions::new().write(true).open(RGPU_CONTROL_PATH) {
                 Ok(f) => f,
@@ -501,7 +594,7 @@ mod platform {
                 name: [0u8; 128],
                 total_memory,
                 index,
-                _pad: 0,
+                minor_number,
             };
 
             // Copy the name, truncating to 127 bytes (leaving room for null terminator)
@@ -514,7 +607,7 @@ mod platform {
                 libc::ioctl(
                     fd,
                     RGPU_IOCTL_ADD_GPU as libc::c_ulong,
-                    &gpu_info as *const RgpuGpuInfo,
+                    &mut gpu_info as *mut RgpuGpuInfo,
                 )
             };
 
@@ -528,10 +621,18 @@ mod platform {
                 return None;
             }
 
+            info!(
+                "created virtual GPU /dev/nvidia{} for {} ({} MB)",
+                minor_number,
+                friendly_name,
+                total_memory / (1024 * 1024)
+            );
+
             Some(VirtualGpuDevice {
                 name: friendly_name.to_string(),
                 index,
                 total_memory,
+                minor_number,
             })
         }
 
