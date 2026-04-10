@@ -185,6 +185,7 @@ struct NvmlState {
     /// Maps real NVML handles to their index (stored as u64 for Send safety)
     real_handles: Vec<u64>,
     ipc_client: Option<NvmlIpcClient>,
+    gpu_map: GpuMap,
 }
 
 static STATE: OnceLock<Mutex<NvmlState>> = OnceLock::new();
@@ -197,6 +198,7 @@ fn get_state() -> &'static Mutex<NvmlState> {
             remote_gpus: Vec::new(),
             real_handles: Vec::new(),
             ipc_client: None,
+            gpu_map: GpuMap::default(),
         })
     })
 }
@@ -227,6 +229,91 @@ fn write_c_string(buf: *mut c_char, buf_len: c_uint, s: &str) {
         std::ptr::copy_nonoverlapping(s.as_ptr() as *const c_char, buf, max_copy);
         *buf.add(max_copy) = 0; // null terminator
     }
+}
+
+// ── GPU Map (read from device manager) ────────────────────────────────
+
+#[derive(Default)]
+struct GpuMap {
+    entries: Vec<GpuMapEntry>,
+}
+
+struct GpuMapEntry {
+    minor_number: u32,
+    #[allow(dead_code)]
+    server_id: u16,
+    #[allow(dead_code)]
+    device_index: u32,
+    #[allow(dead_code)]
+    device_name: String,
+    #[allow(dead_code)]
+    total_memory: u64,
+}
+
+fn read_gpu_map() -> GpuMap {
+    #[cfg(not(unix))]
+    { return GpuMap::default(); }
+
+    #[cfg(unix)]
+    {
+        let path = "/run/rgpu/gpu_map.json";
+        let json = match std::fs::read_to_string(path) {
+            Ok(j) => j,
+            Err(_) => return GpuMap::default(),
+        };
+
+        // Parse manually — we can't use serde in a cdylib interpose easily
+        // Look for "minor_number": N patterns
+        let mut entries = Vec::new();
+
+        // Simple JSON parsing for our known format
+        for section in json.split('{').skip(2) { // skip outer { and "gpus": [
+            let minor = extract_json_u32(section, "minor_number").unwrap_or(0);
+            let server_id = extract_json_u32(section, "server_id").unwrap_or(0) as u16;
+            let device_index = extract_json_u32(section, "device_index").unwrap_or(0);
+            let device_name = extract_json_string(section, "device_name")
+                .unwrap_or_default();
+            let total_memory = extract_json_u64(section, "total_memory").unwrap_or(0);
+
+            if !device_name.is_empty() {
+                entries.push(GpuMapEntry {
+                    minor_number: minor,
+                    server_id,
+                    device_index,
+                    device_name,
+                    total_memory,
+                });
+            }
+        }
+
+        GpuMap { entries }
+    }
+}
+
+fn extract_json_u32(s: &str, key: &str) -> Option<u32> {
+    let pattern = format!("\"{}\":", key);
+    let start = s.find(&pattern)? + pattern.len();
+    let rest = s[start..].trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit())?;
+    rest[..end].parse().ok()
+}
+
+fn extract_json_u64(s: &str, key: &str) -> Option<u64> {
+    let pattern = format!("\"{}\":", key);
+    let start = s.find(&pattern)? + pattern.len();
+    let rest = s[start..].trim_start();
+    let end = rest.find(|c: char| !c.is_ascii_digit())?;
+    rest[..end].parse().ok()
+}
+
+fn extract_json_string(s: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\":", key);
+    let start = s.find(&pattern)? + pattern.len();
+    let rest = s[start..].trim_start();
+    if !rest.starts_with('"') { return None; }
+    let rest = &rest[1..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 // ── NVML Exported Functions ────────────────────────────────────────────
@@ -305,6 +392,9 @@ unsafe fn nvmlInit_v2_impl() -> nvmlReturn_t {
         }
     }
     state.ipc_client = Some(client);
+
+    // Load GPU map written by device manager
+    state.gpu_map = read_gpu_map();
 
     NVML_SUCCESS
 }
@@ -480,8 +570,8 @@ unsafe fn nvmlDeviceGetName_impl(
         };
         let idx = remote_index(device);
         if let Some(gpu) = state.remote_gpus.get(idx) {
-            let display_name = format!("{} (Remote - RGPU)", gpu.device_name);
-            write_c_string(name, length, &display_name);
+            let display_name = &gpu.device_name;
+            write_c_string(name, length, display_name);
             return NVML_SUCCESS;
         }
         return NVML_ERROR_NOT_FOUND;
@@ -519,12 +609,23 @@ unsafe fn nvmlDeviceGetUUID_impl(
         };
         let idx = remote_index(device);
         if let Some(gpu) = state.remote_gpus.get(idx) {
-            // Generate a deterministic UUID based on server_id and device_index
-            let fake_uuid = format!(
-                "GPU-rgpu-{:04x}-{:04x}-0000-{:012x}",
-                gpu.server_id, gpu.server_device_index, gpu.device_id as u64
+            // Generate a deterministic UUID using FNV-1a hash (NVIDIA standard format)
+            let hash_input = format!("RGPU-{}-{}", gpu.server_id, gpu.server_device_index);
+            let mut hash: u64 = 0xcbf29ce484222325u64; // FNV-1a offset basis
+            for byte in hash_input.as_bytes() {
+                hash ^= *byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3u64); // FNV-1a prime
+            }
+            let hash2 = hash.wrapping_mul(0x517cc1b727220a95u64);
+            let uuid_str = format!(
+                "GPU-{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+                (hash >> 32) as u32,
+                (hash >> 16) as u16,
+                hash as u16,
+                (hash2 >> 48) as u16,
+                hash2 & 0xFFFFFFFFFFFFu64,
             );
-            write_c_string(uuid, length, &fake_uuid);
+            write_c_string(uuid, length, &uuid_str);
             return NVML_SUCCESS;
         }
         return NVML_ERROR_NOT_FOUND;
@@ -706,22 +807,19 @@ unsafe fn nvmlDeviceGetPciInfo_v3_impl(
         };
         let idx = remote_index(device);
         if let Some(gpu) = state.remote_gpus.get(idx) {
-            // Generate fake PCI info for remote GPU
+            // Generate realistic PCI info for remote GPU
             std::ptr::write_bytes(pci, 0, 1);
-            (*pci).domain = 0xABCD;
-            (*pci).bus = gpu.server_id as c_uint;
-            (*pci).device = gpu.server_device_index;
+            let bus = 0x80u32 + gpu.server_id as u32;
+            let dev_slot = gpu.server_device_index;
+            (*pci).domain = 0;
+            (*pci).bus = bus;
+            (*pci).device = dev_slot;
             (*pci).pciDeviceId = gpu.device_id;
             (*pci).pciSubSystemId = gpu.vendor_id;
 
-            let bus_id = format!(
-                "{:04X}:{:02X}:{:02X}.0",
-                0xABCD,
-                gpu.server_id,
-                gpu.server_device_index
-            );
-            write_c_string((*pci).busId.as_mut_ptr(), 32, &bus_id);
-            write_c_string((*pci).busIdLegacy.as_mut_ptr(), 16, &bus_id);
+            let bus_id_str = format!("00000000:{:02X}:{:02X}.0", bus, dev_slot);
+            write_c_string((*pci).busId.as_mut_ptr(), 32, &bus_id_str);
+            write_c_string((*pci).busIdLegacy.as_mut_ptr(), 16, &bus_id_str);
 
             return NVML_SUCCESS;
         }
@@ -823,7 +921,12 @@ unsafe fn nvmlDeviceGetMinorNumber_impl(
             Err(_) => return NVML_ERROR_UNKNOWN,
         };
         let idx = remote_index(device);
-        // Minor number for remote GPU: local_count + remote_index
+        // Look up from GPU map first
+        if idx < state.gpu_map.entries.len() {
+            *minor_number = state.gpu_map.entries[idx].minor_number;
+            return NVML_SUCCESS;
+        }
+        // Fallback: local_count + idx
         *minor_number = state.local_gpu_count + idx as u32;
         return NVML_SUCCESS;
     }
@@ -897,23 +1000,34 @@ unsafe fn nvmlDeviceGetHandleByUUID_impl(
         Err(_) => return NVML_ERROR_INVALID_ARGUMENT,
     };
 
-    // Check if it's one of our remote GPU UUIDs
-    if uuid_str.contains("rgpu-") {
+    // Check if it's one of our remote GPU UUIDs by regenerating and comparing
+    if uuid_str.starts_with("GPU-") {
         let state = match get_state().lock() {
             Ok(s) => s,
             Err(_) => return NVML_ERROR_UNKNOWN,
         };
         for (i, gpu) in state.remote_gpus.iter().enumerate() {
-            let fake_uuid = format!(
-                "GPU-rgpu-{:04x}-{:04x}-0000-{:012x}",
-                gpu.server_id, gpu.server_device_index, gpu.device_id as u64
+            let hash_input = format!("RGPU-{}-{}", gpu.server_id, gpu.server_device_index);
+            let mut hash: u64 = 0xcbf29ce484222325u64;
+            for byte in hash_input.as_bytes() {
+                hash ^= *byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3u64);
+            }
+            let hash2 = hash.wrapping_mul(0x517cc1b727220a95u64);
+            let candidate = format!(
+                "GPU-{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+                (hash >> 32) as u32,
+                (hash >> 16) as u16,
+                hash as u16,
+                (hash2 >> 48) as u16,
+                hash2 & 0xFFFFFFFFFFFFu64,
             );
-            if uuid_str == fake_uuid {
+            if uuid_str == candidate {
                 *device = make_remote_handle(i);
                 return NVML_SUCCESS;
             }
         }
-        return NVML_ERROR_NOT_FOUND;
+        // Fall through to check real NVML
     }
 
     // Try real NVML
@@ -965,23 +1079,25 @@ unsafe fn nvmlDeviceGetHandleByPciBusId_v2_impl(
         Err(_) => return NVML_ERROR_INVALID_ARGUMENT,
     };
 
-    // Check if it matches one of our remote GPU PCI bus IDs (ABCD:XX:XX.0)
-    if bus_id_str.starts_with("ABCD:") {
+    // Check if it matches one of our remote GPU PCI bus IDs (00000000:8X:XX.0)
+    // Remote buses start at 0x80, so they begin with "00000000:8" or higher
+    {
         let state = match get_state().lock() {
             Ok(s) => s,
             Err(_) => return NVML_ERROR_UNKNOWN,
         };
         for (i, gpu) in state.remote_gpus.iter().enumerate() {
-            let fake_bus_id = format!(
-                "ABCD:{:02X}:{:02X}.0",
-                gpu.server_id, gpu.server_device_index
+            let bus = 0x80u32 + gpu.server_id as u32;
+            let candidate_bus_id = format!(
+                "00000000:{:02X}:{:02X}.0",
+                bus, gpu.server_device_index
             );
-            if bus_id_str == fake_bus_id {
+            if bus_id_str == candidate_bus_id {
                 *device = make_remote_handle(i);
                 return NVML_SUCCESS;
             }
         }
-        return NVML_ERROR_NOT_FOUND;
+        // No remote match — fall through to real NVML
     }
 
     // Try real NVML — search by iterating
