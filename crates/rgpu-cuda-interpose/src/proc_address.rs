@@ -396,7 +396,7 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
         "cuD3D11GetDevices" => Some(stubs::cuD3D11GetDevices as *mut c_void),
         "cuGraphicsD3D11RegisterResource" => Some(stubs::cuGraphicsD3D11RegisterResource as *mut c_void),
 
-        // ── Not found ───────────────────────────────────────────
+        // ── Not found in our dispatch table ───────────────────────
         _ => None,
     };
 
@@ -409,11 +409,21 @@ pub unsafe extern "C" fn cuGetProcAddress_v2(
             CUDA_SUCCESS
         }
         None => {
+            // Unknown function — try the real CUDA driver (hybrid passthrough)
+            if let Some(real_ptr) = crate::real_cuda_proc_address(name) {
+                tracing::debug!("cuGetProcAddress: '{}' forwarded to real CUDA driver", name);
+                *pfn = real_ptr;
+                if !symbol_status.is_null() {
+                    *symbol_status = 1; // CU_GET_PROC_ADDRESS_SUCCESS
+                }
+                return CUDA_SUCCESS;
+            }
+
             *pfn = std::ptr::null_mut();
             if !symbol_status.is_null() {
                 *symbol_status = 2; // not found
             }
-            tracing::debug!("cuGetProcAddress: '{}' not found", name);
+            tracing::debug!("cuGetProcAddress: '{}' not found (neither interpose nor real driver)", name);
             CUDA_ERROR_NOT_FOUND
         }
     }

@@ -24,6 +24,17 @@ unsafe fn cuInit_impl(flags: c_uint) -> CUresult {
 
     info!("cuInit(flags={})", flags);
 
+    // Also initialize the real CUDA driver (for hybrid passthrough functions)
+    if let Some(real_init) = crate::real_cuda_proc_address("cuInit") {
+        let real_init: unsafe extern "C" fn(u32) -> i32 = std::mem::transmute(real_init);
+        let ret = real_init(flags);
+        if ret != 0 {
+            tracing::warn!("real cuInit returned {}", ret);
+        } else {
+            debug!("real CUDA driver initialized successfully");
+        }
+    }
+
     // Retry with backoff to handle bootstrap race: the daemon's IPC listener
     // may not be ready yet when applications call cuInit early on startup.
     let max_retries = 10u32;

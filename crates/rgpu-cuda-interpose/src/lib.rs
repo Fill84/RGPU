@@ -85,6 +85,63 @@ pub(crate) fn sync_server_context(local_id: Option<u64>) {
     let _ = send_cuda_command(CudaCommand::CtxSetCurrent { ctx: net_handle });
 }
 
+// ── Real CUDA driver loading (hybrid passthrough mode) ─────────────
+// When we don't intercept a function, we forward to the real CUDA driver.
+// This allows apps to use cublas, cudnn, etc. transparently through the
+// real local GPU while known functions go through our IPC interpose.
+
+static REAL_CUDA: OnceLock<Option<libloading::Library>> = OnceLock::new();
+
+/// Get the real CUDA driver library.
+/// Tries to load a renamed original first, then falls back to known system paths.
+/// Includes anti-recursion: skips any library that exports `rgpu_interpose_marker`.
+fn get_real_cuda() -> Option<&'static libloading::Library> {
+    REAL_CUDA.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        let names: &[&str] = &[
+            "libcuda_real.so.1",
+            "/usr/lib/x86_64-linux-gnu/libcuda.so.1",
+            "/usr/lib/aarch64-linux-gnu/libcuda.so.1",
+        ];
+        #[cfg(target_os = "windows")]
+        let names: &[&str] = &["nvcuda_real.dll"];
+        #[cfg(target_os = "macos")]
+        let names: &[&str] = &["libcuda_real.dylib"];
+
+        for name in names {
+            match unsafe { libloading::Library::new(name) } {
+                Ok(lib) => {
+                    // Anti-recursion: check if this is our own interpose library
+                    let is_us = unsafe {
+                        lib.get::<unsafe extern "C" fn() -> c_int>(b"rgpu_interpose_marker").is_ok()
+                    };
+                    if is_us {
+                        tracing::debug!("skipping {} — it's our own interpose", name);
+                        continue;
+                    }
+                    tracing::info!("loaded real CUDA driver from: {}", name);
+                    return Some(lib);
+                }
+                Err(e) => {
+                    tracing::debug!("could not load real CUDA from {}: {}", name, e);
+                }
+            }
+        }
+        tracing::warn!("could not load real CUDA driver — only remote GPUs will be available");
+        None
+    }).as_ref()
+}
+
+/// Look up a function pointer in the real CUDA driver.
+pub(crate) fn real_cuda_proc_address(name: &str) -> Option<*mut c_void> {
+    let lib = get_real_cuda()?;
+    unsafe {
+        lib.get::<*mut c_void>(name.as_bytes())
+            .ok()
+            .map(|sym| *sym)
+    }
+}
+
 static IPC_CLIENT: OnceLock<IpcClient> = OnceLock::new();
 
 fn get_client() -> &'static IpcClient {

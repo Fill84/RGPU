@@ -3,7 +3,18 @@
 ## Project Overzicht
 RGPU (Remote GPU) - Een Rust applicatie die GPU's deelt over het netwerk. Single binary die zowel als server als client functioneert. Ondersteunt Vulkan + CUDA, cross-platform (Windows/Linux/macOS).
 
-## Huidige Status: Docker GPU Transparency — 7/9 Tasks Voltooid
+## Huidige Status: CUDA Interpose Hybrid Passthrough Mode
+**Datum**: 2026-04-10
+
+### CUDA Interpose Hybrid Passthrough (2026-04-10):
+- Added `get_real_cuda()` to lib.rs: loads real CUDA driver (libcuda_real.so.1 or system path) with anti-recursion (skips libraries exporting `rgpu_interpose_marker`)
+- Added `real_cuda_proc_address()` to lib.rs: looks up function pointers in the real CUDA driver
+- Updated `cuGetProcAddress_v2` in proc_address.rs: unknown functions are forwarded to real CUDA driver instead of returning CUDA_ERROR_NOT_FOUND
+- Updated `cuInit_impl` in device.rs: also initializes the real CUDA driver for passthrough functions
+- Build: `cargo check -p rgpu-cuda-interpose` — 0 errors, 0 warnings
+- Committed: `feat: CUDA interpose passthrough mode — forward unknown functions to real driver`
+
+## Vorige Status: Docker GPU Transparency — 7/9 Tasks Voltooid
 **Datum**: 2026-04-10
 
 ### Docker GPU Transparency Feature (2026-04-10):
