@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make remote RGPU GPUs fully transparent to Docker, nvidia-smi, and all applications — `docker run --gpus all` shows remote GPUs as if they are local hardware.
+**Goal:** Make remote RGPU GPUs fully transparent to Docker, nvidia-smi, and all applications — `docker run --gpus all` shows remote GPUs as if they are local hardware. Enforce single-role installation (server XOR client) and prevent double-instance execution.
 
-**Architecture:** Modify the existing Linux kernel module to create `/dev/nvidia{N}` device nodes (major 195) instead of `/dev/rgpu_gpu{N}`. Extend the device manager to assign minor numbers based on existing real NVIDIA devices. Update the NVML interpose to return realistic PCI info, UUIDs, and device names without the "(Remote - RGPU)" suffix. Write a GPU map file so the NVML interpose knows which minor numbers were assigned.
+**Architecture:** Enforce role at install time via a role file checked on startup. Prevent double-instance via OS-level lock (named mutex on Windows, flock on Linux). Modify the existing Linux kernel module to create `/dev/nvidia{N}` device nodes (major 195) instead of `/dev/rgpu_gpu{N}`. Extend the device manager to assign minor numbers based on existing real NVIDIA devices. Update the NVML interpose to return realistic PCI info, UUIDs, and device names without the "(Remote - RGPU)" suffix. Write a GPU map file so the NVML interpose knows which minor numbers were assigned.
 
-**Tech Stack:** Linux kernel module (C), Rust (NVML interpose + device manager), Docker + nvidia-container-toolkit
+**Tech Stack:** Linux kernel module (C), Rust (CLI + NVML interpose + device manager), Docker + nvidia-container-toolkit
 
 **Spec:** `docs/superpowers/specs/2026-04-10-docker-gpu-transparency-design.md`
 
@@ -16,11 +16,359 @@
 
 | File | Action | Responsibility |
 |------|--------|---------------|
+| `crates/rgpu-core/src/role.rs` | Create | Role detection: read role file, check allowed commands |
+| `crates/rgpu-core/src/instance_lock.rs` | Create | Single-instance enforcement via OS mutex/flock |
+| `crates/rgpu-core/src/lib.rs` | Modify | Register new modules |
+| `crates/rgpu-cli/src/main.rs` | Modify | Check role + instance lock before starting server/client |
 | `drivers/linux/rgpu-vgpu/rgpu_vgpu.c` | Modify | Create `/dev/nvidia{N}` with major 195 instead of misc devices |
 | `drivers/linux/rgpu-vgpu/99-rgpu.rules` | Modify | Match `nvidia[0-9]*` device pattern |
 | `crates/rgpu-client/src/device_manager.rs` | Modify | Scan real NVIDIA minors, assign next available, pass to kernel, write GPU map file |
 | `crates/rgpu-nvml-interpose/src/lib.rs` | Modify | Read GPU map file, fix device name, fix PCI info, fix minor number |
 | `tests/docker/test_docker_gpu_visibility.sh` | Create | Test script that checks nvidia-smi and Docker GPU visibility |
+
+---
+
+### Task 0A: Role Lock — Server or Client, never both
+
+**Files:**
+- Create: `crates/rgpu-core/src/role.rs`
+- Modify: `crates/rgpu-core/src/lib.rs`
+- Modify: `crates/rgpu-cli/src/main.rs`
+
+The installation creates a role file that locks the machine to either "server" or "client". The CLI checks this file at startup and refuses to run the wrong role.
+
+- [ ] **Step 1: Create role.rs**
+
+Create `crates/rgpu-core/src/role.rs`:
+
+```rust
+use std::path::PathBuf;
+
+/// The role this RGPU installation is configured for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Server,
+    Client,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Server => "server",
+            Role::Client => "client",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "server" => Some(Role::Server),
+            "client" => Some(Role::Client),
+            _ => None,
+        }
+    }
+}
+
+/// Path to the role file.
+fn role_file_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        // %ProgramData%\RGPU\role or fallback
+        let base = std::env::var("ProgramData")
+            .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+        PathBuf::from(base).join("RGPU").join("role")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/etc/rgpu/role")
+    }
+}
+
+/// Read the configured role from the role file.
+/// Returns None if no role file exists (unconfigured installation).
+pub fn get_installed_role() -> Option<Role> {
+    let path = role_file_path();
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Role::from_str(&contents),
+        Err(_) => None,
+    }
+}
+
+/// Write the role file. Requires admin/root on first write.
+pub fn set_role(role: Role) -> Result<(), String> {
+    let path = role_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(&path, role.as_str())
+        .map_err(|e| format!("failed to write role file {}: {}", path.display(), e))
+}
+
+/// Check if the given command is allowed for the installed role.
+/// Returns Ok(()) if allowed, Err with message if not.
+pub fn check_role(command_role: Role) -> Result<(), String> {
+    match get_installed_role() {
+        None => {
+            // No role file — first run, auto-configure
+            set_role(command_role)?;
+            Ok(())
+        }
+        Some(installed) if installed == command_role => Ok(()),
+        Some(installed) => Err(format!(
+            "this installation is configured as '{}' — cannot run '{}' command.\n\
+             To change role, run: rgpu set-role {}",
+            installed.as_str(),
+            command_role.as_str(),
+            command_role.as_str(),
+        )),
+    }
+}
+```
+
+- [ ] **Step 2: Register module in lib.rs**
+
+Add to `crates/rgpu-core/src/lib.rs`:
+
+```rust
+pub mod role;
+```
+
+- [ ] **Step 3: Add set-role subcommand and role checks to main.rs**
+
+In `crates/rgpu-cli/src/main.rs`, add the `SetRole` variant to the `Commands` enum:
+
+```rust
+    /// Set the installation role (server or client). Requires admin/root.
+    SetRole {
+        /// Role to set: "server" or "client"
+        role: String,
+    },
+```
+
+Add role checks at the start of the `Server` and `Client` match arms in `async_main()`:
+
+```rust
+        Some(Commands::Server { .. }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Server)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            // ... existing server code ...
+        }
+
+        Some(Commands::Client { .. }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Client)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            // ... existing client code ...
+        }
+```
+
+Add the `SetRole` handler:
+
+```rust
+        Some(Commands::SetRole { role }) => {
+            let r = rgpu_core::role::Role::from_str(&role)
+                .ok_or_else(|| anyhow::anyhow!("invalid role '{}': use 'server' or 'client'", role))?;
+            rgpu_core::role::set_role(r)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Role set to '{}'. This machine will only accept '{}' commands.", r.as_str(), r.as_str());
+        }
+```
+
+- [ ] **Step 4: Verify it compiles**
+
+```bash
+cargo check -p rgpu-cli --no-default-features
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/rgpu-core/src/role.rs crates/rgpu-core/src/lib.rs crates/rgpu-cli/src/main.rs
+git commit -m "feat: role lock — installation is server XOR client, enforced at startup"
+```
+
+---
+
+### Task 0B: Single Instance Lock — Prevent double execution
+
+**Files:**
+- Create: `crates/rgpu-core/src/instance_lock.rs`
+- Modify: `crates/rgpu-core/src/lib.rs`
+- Modify: `crates/rgpu-cli/src/main.rs`
+
+Prevents two instances of `rgpu server` or `rgpu client` from running simultaneously on the same machine. Uses a named mutex on Windows and flock on Linux.
+
+- [ ] **Step 1: Create instance_lock.rs**
+
+Create `crates/rgpu-core/src/instance_lock.rs`:
+
+```rust
+use std::fs::File;
+
+/// A system-wide instance lock that prevents double execution.
+/// The lock is held for the lifetime of this struct.
+/// Drop releases the lock automatically.
+pub struct InstanceLock {
+    #[cfg(unix)]
+    _file: File,
+    #[cfg(windows)]
+    _handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+impl InstanceLock {
+    /// Try to acquire an instance lock for the given role.
+    /// Returns Ok(lock) if acquired, Err if another instance is running.
+    pub fn try_acquire(role: &str) -> Result<Self, String> {
+        #[cfg(unix)]
+        {
+            Self::try_acquire_unix(role)
+        }
+        #[cfg(windows)]
+        {
+            Self::try_acquire_windows(role)
+        }
+    }
+
+    #[cfg(unix)]
+    fn try_acquire_unix(role: &str) -> Result<Self, String> {
+        use std::os::unix::io::AsRawFd;
+
+        let lock_path = format!("/run/rgpu-{}.lock", role);
+        let file = File::create(&lock_path)
+            .map_err(|e| format!("failed to create lock file {}: {}", lock_path, e))?;
+
+        let ret = unsafe {
+            libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+        };
+
+        if ret != 0 {
+            return Err(format!(
+                "another RGPU {} is already running (lock: {})",
+                role, lock_path
+            ));
+        }
+
+        // Write PID for debugging
+        use std::io::Write;
+        let mut f = &file;
+        let _ = writeln!(f, "{}", std::process::id());
+
+        Ok(Self { _file: file })
+    }
+
+    #[cfg(windows)]
+    fn try_acquire_windows(role: &str) -> Result<Self, String> {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+
+        let mutex_name: Vec<u16> = OsStr::new(&format!("Global\\RGPU_{}", role))
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let handle = unsafe {
+            windows_sys::Win32::System::Threading::CreateMutexW(
+                std::ptr::null(),
+                1, // bInitialOwner = TRUE
+                mutex_name.as_ptr(),
+            )
+        };
+
+        if handle == 0 {
+            return Err(format!("failed to create mutex for RGPU {}", role));
+        }
+
+        let last_error = unsafe {
+            windows_sys::Win32::Foundation::GetLastError()
+        };
+
+        // ERROR_ALREADY_EXISTS = 183
+        if last_error == 183 {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+            }
+            return Err(format!(
+                "another RGPU {} is already running",
+                role
+            ));
+        }
+
+        Ok(Self { _handle: handle })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::System::Threading::ReleaseMutex(self._handle);
+            windows_sys::Win32::Foundation::CloseHandle(self._handle);
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Register module in lib.rs**
+
+Add to `crates/rgpu-core/src/lib.rs`:
+
+```rust
+pub mod instance_lock;
+```
+
+- [ ] **Step 3: Add libc dependency for Unix flock**
+
+In `crates/rgpu-core/Cargo.toml`, add under `[target.'cfg(unix)'.dependencies]`:
+
+```toml
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+```
+
+- [ ] **Step 4: Add Windows Threading feature**
+
+In `crates/rgpu-core/Cargo.toml`, check that windows-sys has the Threading feature. If there's an existing `[target.'cfg(windows)'.dependencies]` section with windows-sys, add `Win32_System_Threading` to the features list. If not, add:
+
+```toml
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+```
+
+- [ ] **Step 5: Add instance lock to server and client startup in main.rs**
+
+In `crates/rgpu-cli/src/main.rs`, add the lock acquisition after the role check in both the Server and Client handlers:
+
+```rust
+        Some(Commands::Server { .. }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Server)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let _lock = rgpu_core::instance_lock::InstanceLock::try_acquire("server")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            // ... existing server code ...
+        }
+
+        Some(Commands::Client { .. }) => {
+            rgpu_core::role::check_role(rgpu_core::role::Role::Client)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let _lock = rgpu_core::instance_lock::InstanceLock::try_acquire("client")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            // ... existing client code ...
+        }
+```
+
+The `_lock` variable is held for the duration of main — when the process exits (cleanly or crash), the OS releases the mutex/flock automatically.
+
+- [ ] **Step 6: Verify it compiles**
+
+```bash
+cargo check -p rgpu-cli --no-default-features
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/rgpu-core/src/instance_lock.rs crates/rgpu-core/src/lib.rs crates/rgpu-core/Cargo.toml crates/rgpu-cli/src/main.rs
+git commit -m "feat: single-instance lock — prevent double execution of server or client"
+```
 
 ---
 
