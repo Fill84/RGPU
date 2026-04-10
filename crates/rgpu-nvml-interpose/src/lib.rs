@@ -458,6 +458,17 @@ pub unsafe extern "C" fn nvmlInitWithFlags(flags: c_uint) -> nvmlReturn_t {
     rgpu_common::ffi::catch_panic(NVML_ERROR_UNKNOWN, || nvmlInitWithFlags_impl(flags))
 }
 
+/// Internal NVIDIA export table function used by nvidia-smi to load the API.
+/// We return NOT_SUPPORTED since we don't have an internal table — nvidia-smi
+/// will fall back to standard NVML function calls.
+#[no_mangle]
+pub unsafe extern "C" fn nvmlInternalGetExportTable(
+    _table: *mut *const std::ffi::c_void,
+    _guid: *const std::ffi::c_void,
+) -> nvmlReturn_t {
+    NVML_ERROR_NOT_SUPPORTED
+}
+
 #[allow(non_snake_case)]
 unsafe fn nvmlShutdown_impl() -> nvmlReturn_t {
     let mut state = match get_state().lock() {
