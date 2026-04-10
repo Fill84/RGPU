@@ -24,6 +24,7 @@ impl InstanceLock {
 
     #[cfg(unix)]
     fn try_acquire_unix(role: &str) -> Result<Self, String> {
+        use std::fs::File;
         use std::os::unix::io::AsRawFd;
 
         let lock_path = format!("/run/rgpu-{}.lock", role);
