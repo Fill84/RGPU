@@ -1,0 +1,49 @@
+;
+; rgpu-bus.inf — RGPU Virtual Bus Driver
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %RGPU%
+DriverVer   = 04/10/2026,1.0.0.0
+CatalogFile = rgpu-bus.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+rgpu-bus.sys = 1
+
+[Manufacturer]
+%RGPU% = RGPU,NTamd64
+
+[RGPU.NTamd64]
+%RGPUBus.DeviceDesc% = RGPUBus_Install, Root\RGPUBus
+
+[RGPUBus_Install.NT]
+CopyFiles = RGPUBus_CopyFiles
+
+[RGPUBus_CopyFiles]
+rgpu-bus.sys
+
+[RGPUBus_Install.NT.Services]
+AddService = RGPUBus, 0x00000002, RGPUBus_Service
+
+[RGPUBus_Service]
+DisplayName    = %RGPUBus.SvcDesc%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %13%\rgpu-bus.sys
+
+[Strings]
+RGPU                = "RGPU Project"
+RGPUBus.DeviceDesc  = "RGPU Virtual GPU Bus"
+RGPUBus.SvcDesc     = "RGPU Virtual GPU Bus Driver"
+DiskName            = "RGPU Driver Disk"
