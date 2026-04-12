@@ -13,26 +13,51 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
     <RootNamespace>rgpu_bus</RootNamespace>
-    <DriverType>WDM</DriverType>
-    <TargetVersion>Windows10</TargetVersion>
     <ProjectName>rgpu-bus</ProjectName>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <TargetVersion>Windows10</TargetVersion>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
-    <ConfigurationType>Driver</ConfigurationType>
-    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>v143</PlatformToolset>
+    <ConfigurationType>Application</ConfigurationType>
+    <TargetFileExtension>.sys</TargetFileExtension>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <TargetVersion>Windows10</TargetVersion>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
-    <ConfigurationType>Driver</ConfigurationType>
-    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>v143</PlatformToolset>
+    <ConfigurationType>Application</ConfigurationType>
+    <TargetFileExtension>.sys</TargetFileExtension>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <!-- Import WDK kernel-mode driver build props -->
+  <Import Project="$(WDKContentRoot)build\$(WindowsTargetPlatformVersion)\WindowsDriver.Default.props" Condition="Exists('$(WDKContentRoot)build\$(WindowsTargetPlatformVersion)\WindowsDriver.Default.props')" />
+  <Import Project="$(WDKContentRoot)build\$(WindowsTargetPlatformVersion)\WindowsDriver.KernelMode.Wdm.props" Condition="Exists('$(WDKContentRoot)build\$(WindowsTargetPlatformVersion)\WindowsDriver.KernelMode.Wdm.props')" />
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_AMD64_;NTDDI_VERSION=0x0A000000;_WIN32_WINNT=0x0A00;WINVER=0x0A00;POOL_ZERO_RETURNS_NULL=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WarningLevel>Level4</WarningLevel>
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>ntoskrnl.lib;hal.lib;wdmsec.lib;BufferOverflowFastFailK.lib;ntstrsafe.lib;wdmguid.lib</AdditionalDependencies>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <AdditionalLibraryDirectories>$(WindowsSdkDir)Lib\$(WindowsTargetPlatformVersion)\km\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+      <SubSystem>NATIVE</SubSystem>
+      <Driver>WDM</Driver>
+      <GenerateManifest>false</GenerateManifest>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
     <ClCompile Include="rgpu-bus.c" />
     <ClInclude Include="rgpu-bus.h" />
@@ -40,5 +65,19 @@
   <ItemGroup>
     <Inf Include="rgpu-bus.inf" />
   </ItemGroup>
+
+  <!-- Disable manifest for kernel driver -->
+  <PropertyGroup>
+    <EmbedManifest>false</EmbedManifest>
+    <GenerateManifest>false</GenerateManifest>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <EnableUAC>false</EnableUAC>
+    </Link>
+    <Manifest>
+      <EnableDpiAwareness>false</EnableDpiAwareness>
+    </Manifest>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

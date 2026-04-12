@@ -13,8 +13,13 @@
  */
 
 #include <ntddk.h>
+#include <wdmguid.h>
 #include <wdmsec.h>
+#define NTSTRSAFE_LIB
 #include <ntstrsafe.h>
+
+/* Ensure ExAllocatePool2 is available (Windows 10 2004+) */
+#define POOL_ZERO_RETURNS_NULL 1
 
 /* Include shared IOCTL definitions (kernel-safe subset) */
 /* We redefine the structures here for kernel use */
